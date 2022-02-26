@@ -2,9 +2,10 @@
 
 mod api;
 
-use api::{Api, ApiError};
+use std::time::Duration;
 
-use crate::api::structs::ChapterAttributes;
+use api::{Api, ApiError};
+use uuid::Uuid;
 
 #[derive(serde::Deserialize)]
 struct TmpConfig {
@@ -22,12 +23,36 @@ async fn main() -> Result<(), ApiError> {
     let mut api = Api::new();
     //api.login(cfg.username, cfg.password).await?;
 
-    //let m = api.manga_view("73965527-b393-4f65-9bc3-2439ec44935a".to_owned()).await.unwrap();
-    let c = api.manga_chapters("e78a489b-6632-4d61-b00b-5206f5b8b22b".to_owned()).await.unwrap();
-    let chn = c.iter().map(|x| &x.attributes).collect::<Vec<&ChapterAttributes>>();
-    //println!("{:?}", api.check_auth().await);
-    //println!("{:?}", m);
-    //println!("{:?} {}", chn, chn.len());
+    let mid = Uuid::parse_str("73965527-b393-4f65-9bc3-2439ec44935a").unwrap();
+
+    let _ = api.manga_view(mid).await.unwrap();
+    let _ = api.manga_view(mid).await.unwrap();
+    let _ = api.manga_view(mid).await.unwrap();
+    let _ = api.manga_view(mid).await.unwrap();
+    let _ = api.manga_chapters(mid).await.unwrap();
+    let _ = api.manga_chapters(mid).await.unwrap();
+    let _ = api.manga_chapters(mid).await.unwrap();
+    let _ = api.manga_chapters(mid).await.unwrap();
+    // TODO: make this easier (put id on objects / make a public interface for this)
+    let cid = api
+        .cache
+        .get_linked(&mid, api::structs::json::data::RelationshipKind::Chapter)
+        .unwrap()[0];
+    let _ = api.chapter_pages(cid).await.unwrap();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let _ = api.chapter_pages(cid).await.unwrap();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let _ = api.chapter_pages(cid).await.unwrap();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let _ = api.chapter_pages(cid).await.unwrap();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let _ = api.chapter_pages(cid).await.unwrap();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let _ = api.chapter_pages(cid).await.unwrap();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let p = api.chapter_pages(cid).await.unwrap();
+
+    println!("{p:?}");
 
     Ok(())
 }
