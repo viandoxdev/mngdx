@@ -1,0 +1,1 @@
+# Rust mangadex TUI
