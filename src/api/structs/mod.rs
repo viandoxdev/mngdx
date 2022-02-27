@@ -4,6 +4,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::api::request::ApiRequestQuery;
+
 use self::{
     json::{
         data::{self, LocalizedString},
@@ -154,77 +156,37 @@ impl Display for MangaListOrderCriteria {
 }
 
 impl MangaListFilter {
-    pub fn to_query(&self) -> Vec<(String, String)> {
-        let mut res = Vec::new();
+    pub fn to_query(&self) -> ApiRequestQuery {
+        let mut res = ApiRequestQuery::new();
 
-        fn set_simple<T: ToString>(res: &mut Vec<(String, String)>, n: &str, v: T) {
-            res.push((n.to_owned(), v.to_string()));
-        }
-
-        fn set_option<T: ToString>(res: &mut Vec<(String, String)>, n: &str, o: Option<T>) {
-            if let Some(v) = o {
-                res.push((n.to_owned(), v.to_string()));
-            }
-        }
-
-        fn set_vector<T: ToString>(res: &mut Vec<(String, String)>, n: &str, c: &Option<Vec<T>>) {
-            if let Some(v) = c {
-                for e in v {
-                    res.push((format!("{n}[]").to_owned(), e.to_string()));
-                }
-            }
-        }
-
-        fn set_object<K: Display, V: ToString>(
-            res: &mut Vec<(String, String)>,
-            n: &str,
-            o: &HashMap<K, V>,
-        ) {
-            for (k, v) in o {
-                res.push((format!("{n}[{k}]").to_owned(), v.to_string()));
-            }
-        }
-
-        // dirty replace at the end because https://github.com/seanmonstar/reqwest/issues/530
-        set_simple(&mut res, "includedTagsMode", &self.include_tags_mode);
-        set_simple(&mut res, "excludedTagsMode", &self.exclude_tags_mode);
-
-        set_option(&mut res, "year", self.year);
-        set_option(&mut res, "title", self.title.as_ref());
-        set_option(&mut res, "group", self.group);
-        set_option(
-            &mut res,
+        res.insert("includedTagsMode", &self.include_tags_mode);
+        res.insert("excludedTagsMode", &self.exclude_tags_mode);
+        res.insert_map("order", &self.order);
+        res.insert_option("year", self.year);
+        res.insert_option("title", self.title.as_ref());
+        res.insert_option("group", self.group);
+        res.insert_option(
             "createdAtSince",
             self.created_at_since.map(|x| x.format("%Y-%m-%dT%H:%M:%S")),
         );
-        set_option(
-            &mut res,
+        res.insert_option(
             "updatedAtSince",
             self.updated_at_since.map(|x| x.format("%Y-%m-%dT%H:%M:%S")),
         );
-
-        set_vector(&mut res, "authors", &self.authors);
-        set_vector(&mut res, "artists", &self.artists);
-        set_vector(&mut res, "includedTags", &self.include_tags);
-        set_vector(&mut res, "excludedTags", &self.exclude_tags);
-        set_vector(&mut res, "status", &self.status);
-        set_vector(&mut res, "originalLanguage", &self.original_language);
-        set_vector(
-            &mut res,
-            "excludedOriginalLanguage²",
-            &self.exclude_original_language,
-        );
-        set_vector(
-            &mut res,
+        res.insert_vec_option("authors", &self.authors);
+        res.insert_vec_option("artists", &self.artists);
+        res.insert_vec_option("includedTags", &self.include_tags);
+        res.insert_vec_option("excludedTags", &self.exclude_tags);
+        res.insert_vec_option("status", &self.status);
+        res.insert_vec_option("originalLanguage", &self.original_language);
+        res.insert_vec_option("excludedOriginalLanguage", &self.exclude_original_language);
+        res.insert_vec_option(
             "availableTranslatedLanguage",
             &self.availible_translated_language,
         );
-        set_vector(&mut res, "publicationDemographic", &self.demographic);
-        set_vector(&mut res, "ids", &self.ids);
-        set_vector(&mut res, "content_rating", &self.content_rating);
-
-        set_object(&mut res, "order", &self.order);
-
+        res.insert_vec_option("publicationDemographic", &self.demographic);
+        res.insert_vec_option("ids", &self.ids);
+        res.insert_vec_option("content_rating", &self.content_rating);
         res
     }
 }

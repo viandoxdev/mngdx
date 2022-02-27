@@ -1,6 +1,12 @@
 use reqwest::{RequestBuilder, StatusCode};
 use serde::Serialize;
-use std::{fmt::Display, marker::PhantomData};
+use std::{
+    collections::HashMap,
+    fmt::Display,
+    marker::PhantomData,
+    slice::{Iter, IterMut},
+    vec::IntoIter,
+};
 use tokio::time::Duration;
 
 use super::{structs::json::responses::Paginate, Api, ApiError};
@@ -34,13 +40,86 @@ impl Display for ApiRequestKind {
         }
     }
 }
+#[derive(Debug, Clone)]
+pub struct ApiRequestQuery {
+    inner: Vec<(String, String)>,
+}
+
+impl ApiRequestQuery {
+    pub fn new() -> Self {
+        Self { inner: Vec::new() }
+    }
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+    pub fn iter(&self) -> Iter<(String, String)> {
+        self.inner.iter()
+    }
+    pub fn iter_mut(&mut self) -> IterMut<(String, String)> {
+        self.inner.iter_mut()
+    }
+    pub fn insert<T: ToString>(&mut self, key: &str, value: T) {
+        self.inner.push((key.to_string(), value.to_string()));
+    }
+    pub fn insert_vec<T: Display>(&mut self, key: &str, value: &[T]) {
+        for v in value {
+            self.insert(&format!("{key}[]"), v);
+        }
+    }
+    pub fn insert_map<K: Display, V: Display>(&mut self, key: &str, value: &HashMap<K, V>) {
+        for (k, v) in value {
+            self.insert(&format!("{key}[{k}]"), v);
+        }
+    }
+    pub fn insert_option<T: ToString>(&mut self, key: &str, value: Option<T>) {
+        if let Some(v) = value {
+            self.insert(key, v);
+        }
+    }
+    pub fn insert_vec_option<T: Display>(&mut self, key: &str, value: &Option<Vec<T>>) {
+        if let Some(v) = value {
+            self.insert_vec(key, v);
+        }
+    }
+    pub fn insert_map_option<K: Display, V: Display>(
+        &mut self,
+        key: &str,
+        value: &Option<HashMap<K, V>>,
+    ) {
+        if let Some(v) = value {
+            self.insert_map(key, v);
+        }
+    }
+}
+
+impl IntoIterator for ApiRequestQuery {
+    type Item = (String, String);
+    type IntoIter = IntoIter<(String, String)>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.inner.into_iter()
+    }
+}
+
+impl Display for ApiRequestQuery {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{{")?;
+        for (i, v) in self.inner.iter().enumerate() {
+            write!(f, "{}: {}", v.0, v.1)?;
+            if i < self.inner.len() - 1 {
+                write!(f, ", ")?;
+            }
+        }
+        write!(f, "}}")
+    }
+}
 
 /// Represents any request to the api.
 /// A: type for the body of the request
 /// B: type for the response of the request
 pub struct ApiRequest<A, B> {
     pub include: Vec<String>,
-    pub query: Vec<(String, String)>,
+    pub query: ApiRequestQuery,
     pub kind: ApiRequestKind,
     pub endpoint: String,
     pub body: ApiRequestBody<A>,
@@ -52,7 +131,7 @@ impl<A: Serialize, B> Display for ApiRequest<A, B> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} request to {} with {} {:?}",
+            "{} request to {} with {} {}",
             self.kind, self.endpoint, self.body, self.query
         )
     }
@@ -76,7 +155,7 @@ impl<A, B> Default for ApiRequest<A, B> {
     fn default() -> Self {
         Self {
             include: vec![],
-            query: Vec::new(),
+            query: ApiRequestQuery::new(),
             kind: ApiRequestKind::Get,
             endpoint: "/".to_owned(),
             body: ApiRequestBody::None,
@@ -195,8 +274,8 @@ where
 
         let mut chunk = L.min(count);
 
-        req.query.push(("limit".to_owned(), chunk.to_string()));
-        req.query.push(("offset".to_owned(), offset.to_string()));
+        req.query.insert("limit", chunk);
+        req.query.insert("offset", offset);
 
         let mut res = req.send(api).await?;
 
@@ -208,8 +287,8 @@ where
             // reset query
             req.query = query.clone();
 
-            req.query.push(("limit".to_owned(), chunk.to_string()));
-            req.query.push(("offset".to_owned(), offset.to_string()));
+            req.query.insert("limit", chunk);
+            req.query.insert("offset", offset);
 
             let r = req.send(api).await?;
 
@@ -225,7 +304,7 @@ where
     pub async fn send_paginated_all<const L: i32>(&self, api: &mut Api) -> Result<B, ApiError> {
         let mut req = self.clone();
 
-        req.query.push(("limit".to_owned(), L.to_string()));
+        req.query.insert("limit", L);
         // save query
         let query = req.query.clone();
 
@@ -240,7 +319,7 @@ where
             // restore query
             req.query = query.clone();
             // add offset
-            req.query.push(("offset".to_owned(), off.to_string()));
+            req.query.insert("offset", off);
 
             res.concat(req.send(api).await?);
 

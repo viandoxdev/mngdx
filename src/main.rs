@@ -35,7 +35,7 @@ async fn main() -> Result<(), ApiError> {
     let c = api.manga_chapters(mid).await.unwrap();
     let p = api.chapter_pages(c[0]).await.unwrap();
     let d = api.chapter_view(c[0]).await.unwrap();
-    let m = api.manga_list(Default::default(), 0, 200).await.unwrap();
+    let m = api.manga_list(Default::default(), 0, 10).await.unwrap();
     let mut v = vec![];
     for u in m {
         v.push(

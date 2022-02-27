@@ -332,21 +332,4 @@ pub mod data {
             Self(m.into_iter().map(|(k, v)| (k.into(), v)).collect())
         }
     }
-
-    // impl<T: 'static + Clone> Wrapper<T> {
-    //     pub fn cache(self, cache: &mut Graph<Option<Box<dyn Any>>, RelationshipKind>) -> T {
-    //         let id = &*self.id;
-    //         cache.insert(Some(Box::new(self.attributes.clone())), id.clone());
-    //         for r in self.relationships.iter() {
-    //             let rid = &*r.id;
-    //             if !cache.has(rid.clone()) {
-    //                 cache.add(None, rid.clone());
-    //             }
-
-    //             let _ = cache.connect(id.clone(), rid.clone(), r.kind.clone());
-    //         }
-
-    //         self.attributes
-    //     }
-    // }
 }
