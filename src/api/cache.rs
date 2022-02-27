@@ -78,7 +78,7 @@ impl ApiCache {
         }
 
         match self.data.get(uuid) {
-            Some(boxed) => return boxed.downcast_ref::<T>().cloned(),
+            Some(boxed) => boxed.downcast_ref::<T>().cloned(),
             None => None,
         }
     }

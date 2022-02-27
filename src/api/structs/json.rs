@@ -27,6 +27,7 @@ pub mod responses {
     pub trait Paginate {
         fn total(&self) -> i32;
         fn concat(&mut self, o: Self);
+        fn count(&self) -> i32;
     }
 
     // POST /auth/login
@@ -62,6 +63,12 @@ pub mod responses {
         pub total: i32,
     }
 
+    // GET /chapter/{id}
+    #[derive(Deserialize)]
+    pub struct ChapterView {
+        pub data: Wrapper<Chapter>,
+    }
+
     // GET /at-home/server/{id}
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -73,6 +80,13 @@ pub mod responses {
         pub chapter_id: Option<Uuid>,
     }
 
+    // GET /manga
+    #[derive(Deserialize)]
+    pub struct MangaList {
+        pub data: Vec<Wrapper<data::Manga>>,
+        pub total: i32,
+    }
+
     // impls
 
     impl Paginate for MangaFeed {
@@ -82,12 +96,27 @@ pub mod responses {
         fn concat(&mut self, mut o: Self) {
             self.data.append(&mut o.data);
         }
+        fn count(&self) -> i32 {
+            self.data.len() as i32
+        }
+    }
+
+    impl Paginate for MangaList {
+        fn total(&self) -> i32 {
+            self.total
+        }
+        fn concat(&mut self, mut o: Self) {
+            self.data.append(&mut o.data);
+        }
+        fn count(&self) -> i32 {
+            self.data.len() as i32
+        }
     }
 }
 
 /// General data, objects as defined by the openapi specs.
 pub mod data {
-    use serde::Deserialize;
+    use serde::{Deserialize, Serialize};
     use std::collections::HashMap;
     use uuid::Uuid;
 
@@ -95,7 +124,7 @@ pub mod data {
 
     // Enums
 
-    #[derive(Deserialize, Debug, Clone)]
+    #[derive(Deserialize, Serialize, Debug, Clone)]
     #[serde(rename_all = "snake_case")]
     pub enum PublicationDemographic {
         Shounen,
@@ -104,7 +133,7 @@ pub mod data {
         Seinen,
     }
 
-    #[derive(Deserialize, Debug, Clone)]
+    #[derive(Deserialize, Serialize, Debug, Clone)]
     #[serde(rename_all = "snake_case")]
     pub enum ContentRating {
         Safe,
@@ -122,7 +151,7 @@ pub mod data {
         Rejected,
     }
 
-    #[derive(Deserialize, Debug, Clone)]
+    #[derive(Deserialize, Serialize, Debug, Clone)]
     #[serde(rename_all = "snake_case")]
     pub enum MangaStatus {
         Ongoing,
@@ -284,17 +313,17 @@ pub mod data {
     // Impls
 
     impl LocalizedString {
-        fn get(&self, lang: LanguageCode) -> Option<String> {
+        pub fn get(&self, lang: LanguageCode) -> Option<String> {
             self.0.get(&lang).cloned()
         }
-        fn any(&self) -> String {
+        pub fn any(&self) -> String {
             self.0
                 .iter()
                 .next()
                 .map(|x| x.1.clone())
                 .unwrap_or_default()
         }
-        fn get_or_any(&self, lang: LanguageCode) -> String {
+        pub fn get_or_any(&self, lang: LanguageCode) -> String {
             self.get(lang).unwrap_or_else(|| self.any())
         }
     }

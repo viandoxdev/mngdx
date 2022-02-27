@@ -8,11 +8,7 @@ use uuid::Uuid;
 use self::structs::*;
 use self::{
     cache::ApiCache,
-    structs::json::{
-        body,
-        data::{Chapter, RelationshipKind},
-        responses,
-    },
+    structs::json::{body, data::RelationshipKind, responses},
 };
 
 pub mod cache;
@@ -91,37 +87,35 @@ impl Api {
     }
 
     pub async fn login(&mut self, username: String, password: String) -> Result<(), ApiError> {
-        ApiRequest::<body::AuthLogin, responses::AuthLogin, (), _> {
+        let res = ApiRequest::<body::AuthLogin, responses::AuthLogin> {
             endpoint: "/auth/login".to_owned(),
             kind: ApiRequestKind::Post,
             body: ApiRequestBody::Json(body::AuthLogin { username, password }),
-            done: |api: &mut Api, res: responses::AuthLogin, _: &()| {
-                api.refresh = Some(res.token.refresh);
-                api.session = Some(res.token.session);
-                Ok(())
-            },
             ..Default::default()
         }
-        .execute_simple(self)
-        .await
+        .send_simple(self)
+        .await?;
+
+        self.refresh = Some(res.token.refresh);
+        self.session = Some(res.token.session);
+        Ok(())
     }
 
     pub async fn refresh(&mut self) -> Result<(), ApiError> {
         if let Some(ref refresh) = self.refresh {
-            ApiRequest::<body::AuthRefresh, responses::AuthRefresh, (), _> {
+            let res = ApiRequest::<body::AuthRefresh, responses::AuthRefresh> {
                 endpoint: "/auth/refresh".to_owned(),
                 kind: ApiRequestKind::Post,
                 body: ApiRequestBody::Json(body::AuthRefresh {
                     token: refresh.clone(),
                 }),
-                done: |api: &mut Api, res: responses::AuthRefresh, _: &()| {
-                    api.session = Some(res.token.session);
-                    Ok(())
-                },
                 ..Default::default()
             }
-            .execute_simple(self)
-            .await
+            .send_simple(self)
+            .await?;
+
+            self.session = Some(res.token.session);
+            Ok(())
         } else {
             Err(ApiError::Auth)
         }
@@ -129,15 +123,17 @@ impl Api {
 
     pub async fn check_auth(&mut self) -> Result<bool, ApiError> {
         if self.session.is_some() {
-            return ApiRequest::<(), responses::AuthCheck, bool, _> {
+            let res = ApiRequest::<(), responses::AuthCheck> {
                 endpoint: "/auth/check".to_owned(),
-                done: |_: &mut Api, res: responses::AuthCheck, _: &()| Ok(res.is_authenticated),
                 ..Default::default()
             }
-            .execute_simple(self)
-            .await;
+            .send_simple(self)
+            .await?;
+
+            Ok(res.is_authenticated)
+        } else {
+            Ok(false)
         }
-        Ok(false)
     }
 
     pub async fn manga_view(&mut self, uuid: Uuid) -> Result<Manga, ApiError> {
@@ -145,38 +141,64 @@ impl Api {
             return Ok(cached);
         }
 
-        ApiRequest::<(), responses::MangaView, Manga, _> {
+        let res = ApiRequest::<(), responses::MangaView> {
             endpoint: format!("/manga/{}", uuid).to_owned(),
-            done: |api: &mut Api, res: responses::MangaView, _: &()| Ok(res.store(&mut api.cache)),
             ..Default::default()
         }
-        .execute_simple(self)
-        .await
+        .send_simple(self)
+        .await?;
+        Ok(res.store(&mut self.cache))
     }
 
-    pub async fn manga_chapters(&mut self, uuid: Uuid) -> Result<Vec<Chapter>, ApiError> {
-        if let Some(chapters) = self.cache.get_linked(&uuid, RelationshipKind::Chapter) {
-            let cached = chapters
-                .iter()
-                .filter_map(|id| self.cache.get::<Chapter>(id))
-                .collect::<Vec<Chapter>>();
+    /// Search mangas.
+    /// WARNING: This always sends a request (caching it would require sending 500~ requests).
+    pub async fn manga_list(
+        &mut self,
+        filter: MangaListFilter,
+        offset: i32,
+        count: i32,
+    ) -> Result<Vec<Uuid>, ApiError> {
+        let query = filter.to_query();
+        let res = ApiRequest::<(), responses::MangaList> {
+            endpoint: "/manga".to_owned(),
+            query,
+            ..Default::default()
+        }
+        .send_paginated::<100>(self, offset, count)
+        .await?;
+        Ok(res.store(&mut self.cache))
+    }
 
-            if cached.len() != chapters.len() {
-                log::warn!("Some cached uuid of chapters (from manga) are missing from cache");
-            }
-
+    pub async fn manga_chapters(&mut self, uuid: Uuid) -> Result<Vec<Uuid>, ApiError> {
+        if let Some(cached) = self.cache.get_linked(&uuid, RelationshipKind::Chapter) {
             if !cached.is_empty() {
                 return Ok(cached);
             }
         }
 
-        ApiRequest::<(), responses::MangaFeed, Vec<Chapter>, ()> {
+        let res = ApiRequest::<(), responses::MangaFeed> {
             endpoint: format!("/manga/{uuid}/feed").to_owned(),
-            done: |api, res, _| Ok(res.store(&mut api.cache)),
             ..Default::default()
         }
-        .execute_paginate::<500>(self)
-        .await
+        .send_paginated_all::<500>(self)
+        .await?;
+
+        Ok(res.store(&mut self.cache))
+    }
+
+    pub async fn chapter_view(&mut self, uuid: Uuid) -> Result<Chapter, ApiError> {
+        if let Some(chapter) = self.cache.get(&uuid) {
+            return Ok(chapter);
+        }
+
+        let res = ApiRequest::<(), responses::ChapterView> {
+            endpoint: format!("/chapter/{uuid}").to_owned(),
+            ..Default::default()
+        }
+        .send(self)
+        .await?;
+
+        Ok(res.store(&mut self.cache))
     }
 
     pub async fn chapter_pages(&mut self, uuid: Uuid) -> Result<Vec<String>, ApiError> {
@@ -188,17 +210,14 @@ impl Api {
             Some(Some(Some(v))) => v,
             _ => {
                 // couldn't find anything in the cache
-                ApiRequest::<(), responses::AtHomeServer, AtHomeServerChapter, Uuid> {
+                let mut res = ApiRequest::<(), responses::AtHomeServer> {
                     endpoint: format!("/at-home/server/{uuid}").to_owned(),
-                    done: |api, mut res, id| {
-                        res.chapter_id = Some(*id);
-                        Ok(res.store(&mut api.cache))
-                    },
-                    info: uuid,
                     ..Default::default()
                 }
-                .execute(self)
-                .await?
+                .send(self)
+                .await?;
+                res.chapter_id = Some(uuid);
+                res.store(&mut self.cache)
             }
         };
         let pages = if self.data_saver {

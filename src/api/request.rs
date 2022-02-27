@@ -1,6 +1,6 @@
 use reqwest::{RequestBuilder, StatusCode};
 use serde::Serialize;
-use std::{collections::HashMap, fmt::Display};
+use std::{fmt::Display, marker::PhantomData};
 use tokio::time::Duration;
 
 use super::{structs::json::responses::Paginate, Api, ApiError};
@@ -38,20 +38,17 @@ impl Display for ApiRequestKind {
 /// Represents any request to the api.
 /// A: type for the body of the request
 /// B: type for the response of the request
-/// R: type for the result of the processed request
-/// F: closure
-pub struct ApiRequest<A, B, R, I> {
+pub struct ApiRequest<A, B> {
     pub include: Vec<String>,
-    pub query: HashMap<String, String>,
+    pub query: Vec<(String, String)>,
     pub kind: ApiRequestKind,
     pub endpoint: String,
     pub body: ApiRequestBody<A>,
-    // stores data that can't be obtained from the api response but that is necesary for processing
-    pub info: I,
-    pub done: fn(&mut Api, B, &I) -> Result<R, ApiError>,
+
+    pub _phantom: PhantomData<B>,
 }
 
-impl<A: Serialize, B, R, I> Display for ApiRequest<A, B, R, I> {
+impl<A: Serialize, B> Display for ApiRequest<A, B> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -61,7 +58,7 @@ impl<A: Serialize, B, R, I> Display for ApiRequest<A, B, R, I> {
     }
 }
 
-impl<A: Clone, B, R, I: Clone> Clone for ApiRequest<A, B, R, I> {
+impl<A: Clone, B> Clone for ApiRequest<A, B> {
     fn clone(&self) -> Self {
         Self {
             include: self.include.clone(),
@@ -69,27 +66,27 @@ impl<A: Clone, B, R, I: Clone> Clone for ApiRequest<A, B, R, I> {
             kind: self.kind.clone(),
             endpoint: self.endpoint.clone(),
             body: self.body.clone(),
-            info: self.info.clone(),
-            done: self.done,
+
+            _phantom: PhantomData,
         }
     }
 }
 
-impl<A, B, R, I: Default> Default for ApiRequest<A, B, R, I> {
+impl<A, B> Default for ApiRequest<A, B> {
     fn default() -> Self {
         Self {
             include: vec![],
-            query: HashMap::new(),
+            query: Vec::new(),
             kind: ApiRequestKind::Get,
             endpoint: "/".to_owned(),
             body: ApiRequestBody::None,
-            info: I::default(),
-            done: |_, _, _| Err(ApiError::Other),
+
+            _phantom: PhantomData,
         }
     }
 }
 
-impl<A, B, R, I> ApiRequest<A, B, R, I>
+impl<A, B> ApiRequest<A, B>
 where
     A: serde::Serialize,
     B: serde::de::DeserializeOwned,
@@ -177,28 +174,61 @@ where
 
         result
     }
-    /// Send and process request without any retry on error handling.
-    pub async fn execute_simple(&self, api: &mut Api) -> Result<R, ApiError> {
-        let data = self.send_simple(api).await?;
-        (self.done)(api, data, &self.info)
-    }
-    /// Send request with rety on error.
-    pub async fn execute(&self, api: &mut Api) -> Result<R, ApiError> {
-        let data = self.send(api).await?;
-        (self.done)(api, data, &self.info)
-    }
 }
 
-impl<A, B, R, I> ApiRequest<A, B, R, I>
+impl<A, B> ApiRequest<A, B>
 where
     A: serde::Serialize + Clone,
     B: serde::de::DeserializeOwned + Paginate,
-    I: Clone,
 {
-    pub async fn send_paginated<const L: i32>(&self, api: &mut Api) -> Result<B, ApiError> {
-        let mut req = <Self as Clone>::clone(self);
+    pub async fn send_paginated<const L: i32>(
+        &self,
+        api: &mut Api,
+        mut offset: i32,
+        mut count: i32,
+    ) -> Result<B, ApiError> {
+        let mut req = self.clone();
+        // save query
+        let query = req.query.clone();
 
-        req.query.insert("limit".to_owned(), L.to_string());
+        // Yes I know this is repeated, but its late and rust won't let me do it otherwise.
+
+        let mut chunk = L.min(count);
+
+        req.query.push(("limit".to_owned(), chunk.to_string()));
+        req.query.push(("offset".to_owned(), offset.to_string()));
+
+        let mut res = req.send(api).await?;
+
+        offset += res.count();
+        count = (res.total() - offset).min(count - res.count());
+
+        while count > 0 {
+            log::trace!("sending paginated...");
+            // reset query
+            req.query = query.clone();
+
+            req.query.push(("limit".to_owned(), chunk.to_string()));
+            req.query.push(("offset".to_owned(), offset.to_string()));
+
+            let r = req.send(api).await?;
+
+            offset += r.count();
+            count = (r.total() - offset).min(count - r.count());
+            chunk = L.min(count);
+
+            res.concat(r);
+        }
+        Ok(res)
+    }
+
+    pub async fn send_paginated_all<const L: i32>(&self, api: &mut Api) -> Result<B, ApiError> {
+        let mut req = self.clone();
+
+        req.query.push(("limit".to_owned(), L.to_string()));
+        // save query
+        let query = req.query.clone();
+
         let mut res = req.send(api).await?;
 
         let mut off = L;
@@ -207,7 +237,11 @@ where
         while off < total {
             log::trace!("sending paginated [{}/{}]", off, total);
 
-            req.query.insert("offset".to_owned(), off.to_string());
+            // restore query
+            req.query = query.clone();
+            // add offset
+            req.query.push(("offset".to_owned(), off.to_string()));
+
             res.concat(req.send(api).await?);
 
             off += L;
@@ -215,10 +249,5 @@ where
 
         log::trace!("sending paginated [{}/{}]", total, total);
         Ok(res)
-    }
-
-    pub async fn execute_paginate<const L: i32>(&self, api: &mut Api) -> Result<R, ApiError> {
-        let data = self.send_paginated::<L>(api).await?;
-        (self.done)(api, data, &self.info)
     }
 }

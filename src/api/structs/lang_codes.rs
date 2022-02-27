@@ -1,5 +1,7 @@
 // Shoutout to Vim Macros
 
+use std::fmt::Display;
+
 use serde::Deserialize;
 
 #[derive(Hash, PartialEq, Eq, Deserialize, Debug, Clone)]
@@ -158,6 +160,9 @@ pub enum LanguageCode {
 
     Filipino, // tl
 
+    // Only on mangadex, the null language !
+    Null,
+
     // OTHERS (just in case)
     Any(String),
 }
@@ -314,6 +319,8 @@ impl From<LanguageCode> for String {
 
             LanguageCode::Filipino => "tl".to_owned(),
 
+            LanguageCode::Null => "NULL".to_owned(),
+
             LanguageCode::Any(s) => s,
         }
     }
@@ -469,6 +476,11 @@ impl From<String> for LanguageCode {
             "ko-ro" => LanguageCode::RomanizedKorean,
             "zh-ro" => LanguageCode::RomanizedChinese,
 
+            "NULL" => {
+                log::debug!("NULL language found. (This is a problem with mangadex)");
+                LanguageCode::Null
+            }
+
             _ => {
                 // error because if that happens, it means I've forgotten a code, and need to add
                 // it.
@@ -476,5 +488,10 @@ impl From<String> for LanguageCode {
                 LanguageCode::Any(v)
             }
         }
+    }
+}
+impl Display for LanguageCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", <Self as Into::<String>>::into(self.clone()))
     }
 }

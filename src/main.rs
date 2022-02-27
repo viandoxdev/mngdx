@@ -2,10 +2,10 @@
 
 mod api;
 
-use std::time::Duration;
-
 use api::{Api, ApiError};
 use uuid::Uuid;
+
+use crate::api::structs::lang_codes::LanguageCode;
 
 #[derive(serde::Deserialize)]
 struct TmpConfig {
@@ -32,27 +32,24 @@ async fn main() -> Result<(), ApiError> {
     let _ = api.manga_chapters(mid).await.unwrap();
     let _ = api.manga_chapters(mid).await.unwrap();
     let _ = api.manga_chapters(mid).await.unwrap();
-    let _ = api.manga_chapters(mid).await.unwrap();
-    // TODO: make this easier (put id on objects / make a public interface for this)
-    let cid = api
-        .cache
-        .get_linked(&mid, api::structs::json::data::RelationshipKind::Chapter)
-        .unwrap()[0];
-    let _ = api.chapter_pages(cid).await.unwrap();
-    tokio::time::sleep(Duration::from_secs(1)).await;
-    let _ = api.chapter_pages(cid).await.unwrap();
-    tokio::time::sleep(Duration::from_secs(1)).await;
-    let _ = api.chapter_pages(cid).await.unwrap();
-    tokio::time::sleep(Duration::from_secs(1)).await;
-    let _ = api.chapter_pages(cid).await.unwrap();
-    tokio::time::sleep(Duration::from_secs(1)).await;
-    let _ = api.chapter_pages(cid).await.unwrap();
-    tokio::time::sleep(Duration::from_secs(1)).await;
-    let _ = api.chapter_pages(cid).await.unwrap();
-    tokio::time::sleep(Duration::from_secs(1)).await;
-    let p = api.chapter_pages(cid).await.unwrap();
+    let c = api.manga_chapters(mid).await.unwrap();
+    let p = api.chapter_pages(c[0]).await.unwrap();
+    let d = api.chapter_view(c[0]).await.unwrap();
+    let m = api.manga_list(Default::default(), 0, 200).await.unwrap();
+    let mut v = vec![];
+    for u in m {
+        v.push(
+            api.manga_view(u)
+                .await
+                .unwrap()
+                .title
+                .get_or_any(LanguageCode::English),
+        );
+    }
 
     println!("{p:?}");
+    println!("{d:?}");
+    println!("{v:?}");
 
     Ok(())
 }
