@@ -1,18 +1,18 @@
+use crossterm::event;
+use render::render;
 use std::sync::{
     atomic::AtomicBool,
     mpsc::{self, Sender},
-    Arc, Mutex, MutexGuard, PoisonError,
+    Arc, Mutex, MutexGuard,
 };
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use crossterm::event;
 use tui::{backend::Backend, Terminal};
-use render::render;
 
 use self::{events::AppEvent, render::NS_PER_FRAME};
 
-mod render;
 mod events;
+mod render;
 
 pub struct AppData {
     block_name: String,
@@ -39,7 +39,10 @@ where
         }
     }
     pub fn run(&mut self) {
+        // boolean shared across all 3 threads to know when to stop.
         let stop = Arc::new(AtomicBool::new(false));
+
+        // those will be moved
 
         let data_mutex = self.data.clone();
         let terminal_mutex = self.terminal.clone();
@@ -54,13 +57,18 @@ where
                     break;
                 }
 
-                let data_guard = data_mutex.lock();
-                let terminal_guard = terminal_mutex.lock();
+                {
+                    // lock access to data and terminal
+                    let data_guard = data_mutex.lock();
+                    let terminal_guard = terminal_mutex.lock();
 
-                if let (Ok(data), Ok(mut terminal)) = (data_guard, terminal_guard) {
-                    let _ = terminal.draw(|f| render(f, &data));
+                    // try to render
+                    if let (Ok(data), Ok(mut terminal)) = (data_guard, terminal_guard) {
+                        let _ = terminal.draw(|f| render(f, &data));
+                    }
                 }
 
+                // wait until next frame
                 let now = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap()
@@ -72,34 +80,33 @@ where
             }
         });
 
+        // these will be moved
         let data_mutex = self.data.clone();
         let should_stop = stop.clone();
-        // create event channeel / queue
+
+        // create event channel / queue
         let (sender, receiver) = mpsc::channel();
+
         self.event_queue = sender;
 
         // main thread
         thread::spawn(move || {
-            let process = || -> anyhow::Result<()> {
-                let event = receiver.recv()?;
-                // unwrap because PoisonErrors only happen after a thread crashed, and by that
-                // point, something much bigger has fucked up.
-                let mut data = data_mutex.lock().unwrap();
-
-                events::process_event(event, &mut data, &should_stop);
-
-                Ok(())
-            };
-
             loop {
                 if should_stop.load(std::sync::atomic::Ordering::Relaxed) {
                     break;
                 }
-                let _ = process();
+
+                if let Ok(event) = receiver.recv() {
+                    // unwrap because PoisonErrors only happen after a thread crashed, and by that
+                    // point, something much bigger has fucked up.
+                    let mut data = data_mutex.lock().unwrap();
+
+                    events::process_event(event, &mut data, &should_stop);
+                }
             }
         });
 
-        // input "thread"
+        // input "thread", has to be on main because ¯\_(ツ)_/¯
         loop {
             if stop.load(std::sync::atomic::Ordering::Relaxed) {
                 break;
@@ -111,13 +118,14 @@ where
         }
     }
 
-    pub fn get_terminal(
-        &self,
-    ) -> Result<MutexGuard<Terminal<B>>, PoisonError<MutexGuard<Terminal<B>>>> {
-        self.terminal.lock()
+    /// get a mutex guard to the terminal
+    pub fn get_terminal(&self) -> Option<MutexGuard<Terminal<B>>> {
+        self.terminal.lock().ok()
     }
 
+    /// tries to read and convert an event into an AppEvent.
     pub fn event() -> Option<AppEvent> {
+        // if no event in 50ms
         if !event::poll(Duration::from_millis(50)).ok()? {
             return None;
         }

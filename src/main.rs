@@ -14,6 +14,11 @@ use tui::{backend::CrosstermBackend, Terminal};
 
 use crate::app::App;
 
+// TODO: remove viuer and replace with custom terminal image display tool taking adventage of
+// kitty's protocol. For example: loading an image with an id and then changing its position
+// without reloading it (probably necessary to achieve 60 fps rendering, and also cool to cut down
+// on dependencies).
+
 #[tokio::main]
 async fn main() {
     pretty_env_logger::init();

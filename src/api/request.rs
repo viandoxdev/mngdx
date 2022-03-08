@@ -237,13 +237,11 @@ where
             StatusCode::INTERNAL_SERVER_ERROR => Err(ApiError::Them),
             StatusCode::TOO_MANY_REQUESTS => {
                 let retry_ts = res.headers().get("X-RateLimit-Retry-After");
-                let retry_in: i64;
-                if let Some(ts) = retry_ts {
-                    retry_in = ts.to_str().unwrap().parse::<i64>().unwrap()
-                        - chrono::Utc::now().timestamp();
+                let retry_in = if let Some(ts) = retry_ts {
+                    ts.to_str().unwrap().parse::<i64>().unwrap() - chrono::Utc::now().timestamp()
                 } else {
-                    retry_in = 5;
-                }
+                    5
+                };
                 Err(ApiError::RateLimit(tokio::time::Duration::from_secs(
                     retry_in.try_into().unwrap(),
                 )))

@@ -1,6 +1,6 @@
-use std::sync::{Arc, atomic::AtomicBool};
-use crossterm::event::{Event, KeyEvent, KeyCode, KeyModifiers};
 use super::AppData;
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use std::sync::{atomic::AtomicBool, Arc};
 
 pub enum AppEvent {
     Dummy(String),
@@ -30,7 +30,7 @@ impl TryFrom<Event> for AppEvent {
 
             Event::Mouse(me) => Ok(AppEvent::Dummy(format!("{me:?}"))),
 
-            _ => Err(anyhow::Error::msg("No App event for this event"))
+            _ => Err(anyhow::Error::msg("No App event for this event")),
         }
     }
 }
