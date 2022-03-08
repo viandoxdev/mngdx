@@ -13,7 +13,7 @@ use self::{
     },
     lang_codes::LanguageCode,
 };
-use super::ApiCache;
+use super::{ApiCache, API_UUID};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use uuid::Uuid;
@@ -247,8 +247,15 @@ pub struct AtHomeServerChapter {
     pub data_saver: Vec<String>,
     pub hash: String,
 }
+
+#[derive(Clone)]
+pub struct Volume {
+    pub volume: String,
+}
+
 // re export types that don't change
 pub use data::Chapter;
+pub use data::CoverArt;
 pub use data::Tag;
 
 impl Store<Manga> for responses::MangaView {
@@ -262,9 +269,12 @@ impl Store<Manga> for responses::MangaView {
             cache.link(&self.data.id, &t.id, data::RelationshipKind::Tag);
             cache.link(&t.id, &self.data.id, data::RelationshipKind::Manga);
         }
-        for r in self.data.relationships {
-            cache.link(&self.data.id, &r.id, r.kind);
-        }
+        store_relationships(
+            cache,
+            self.data.relationships,
+            self.data.id,
+            data::RelationshipKind::Manga,
+        );
         m
     }
 }
@@ -294,10 +304,12 @@ impl Store<Vec<Uuid>> for responses::MangaFeed {
 impl Store<Chapter> for responses::ChapterView {
     fn store(self, cache: &mut ApiCache) -> Chapter {
         cache.insert(self.data.id, self.data.attributes.clone(), None);
-        for r in self.data.relationships {
-            cache.link(&self.data.id, &r.id, r.kind.clone());
-            cache.link(&r.id, &self.data.id, data::RelationshipKind::Chapter)
-        }
+        store_relationships(
+            cache,
+            self.data.relationships,
+            self.data.id,
+            data::RelationshipKind::Chapter,
+        );
         self.data.attributes
     }
 }
@@ -322,5 +334,97 @@ impl Store<AtHomeServerChapter> for responses::AtHomeServer {
         cache.link(&cid, &id, data::RelationshipKind::AtHome);
         cache.link(&id, &cid, data::RelationshipKind::Chapter);
         m
+    }
+}
+
+impl Store<Vec<Uuid>> for responses::MangaAggregate {
+    fn store(self, cache: &mut ApiCache) -> Vec<Uuid> {
+        let mut res = Vec::with_capacity(self.volumes.len());
+
+        for (k, e) in self.volumes {
+            let id = Uuid::new_v4();
+            let v = Volume { volume: k };
+
+            res.push(id);
+
+            cache.insert(id, v, None);
+
+            // link volume to manga
+            cache.link(&self.manga_id.unwrap(), &id, data::RelationshipKind::Volume);
+            cache.link(&id, &self.manga_id.unwrap(), data::RelationshipKind::Manga);
+
+            for c in e.chapters.into_values() {
+                for cid in std::iter::once(c.id).chain(c.others.into_iter()) {
+                    // link chapters to volume
+                    cache.link(&cid, &id, data::RelationshipKind::Volume);
+                    cache.link(&id, &cid, data::RelationshipKind::Chapter);
+                }
+            }
+        }
+        res
+    }
+}
+
+impl Store<Vec<Uuid>> for responses::MangaTag {
+    fn store(self, cache: &mut ApiCache) -> Vec<Uuid> {
+        let mut res = Vec::with_capacity(self.data.len());
+
+        for e in self.data {
+            cache.insert(e.id, e.attributes, None);
+            cache.link(&API_UUID, &e.id, data::RelationshipKind::Tag);
+
+            res.push(e.id);
+        }
+        res
+    }
+}
+
+impl Store<Vec<Uuid>> for responses::CoverArtList {
+    fn store(self, cache: &mut ApiCache) -> Vec<Uuid> {
+        let mut res = Vec::with_capacity(self.data.len());
+        for c in self.data {
+            res.push(c.id);
+            responses::CoverArt { data: c }.store(cache);
+        }
+        res
+    }
+}
+
+impl Store<CoverArt> for responses::CoverArt {
+    fn store(self, cache: &mut ApiCache) -> CoverArt {
+        cache.insert(self.data.id, self.data.attributes.clone(), None);
+        store_relationships(
+            cache,
+            self.data.relationships,
+            self.data.id,
+            data::RelationshipKind::CoverArt,
+        );
+        self.data.attributes
+    }
+}
+
+impl Store<CoverArt> for responses::MangaCoverArt {
+    fn store(self, cache: &mut ApiCache) -> CoverArt {
+        // set main cover art relationship where necessary
+        for c in &self.data.relationships {
+            if c.kind == data::RelationshipKind::Manga {
+                cache.link(&c.id, &self.data.id, data::RelationshipKind::MainCoverArt);
+                break;
+            }
+        }
+
+        responses::CoverArt { data: self.data }.store(cache)
+    }
+}
+
+fn store_relationships(
+    cache: &mut ApiCache,
+    relationships: Vec<data::Relationship>,
+    uuid: Uuid,
+    kind: data::RelationshipKind,
+) {
+    for r in relationships {
+        cache.link(&uuid, &r.id, r.kind);
+        cache.link(&r.id, &uuid, kind.clone());
     }
 }

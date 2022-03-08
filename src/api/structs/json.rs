@@ -18,6 +18,8 @@ pub mod body {
 
 /// body or responses (server -> client)
 pub mod responses {
+    use std::collections::HashMap;
+
     use serde::Deserialize;
     use uuid::Uuid;
 
@@ -63,6 +65,9 @@ pub mod responses {
         pub total: i32,
     }
 
+    // GET /manga/random
+    pub type MangaRandom = MangaView;
+
     // GET /chapter/{id}
     #[derive(Deserialize)]
     pub struct ChapterView {
@@ -87,6 +92,39 @@ pub mod responses {
         pub total: i32,
     }
 
+    // GET /manga/{id}/aggregate
+    #[derive(Deserialize)]
+    pub struct MangaAggregate {
+        pub volumes: HashMap<String, data::Volume>,
+
+        pub manga_id: Option<Uuid>,
+    }
+
+    // GET /manga/tag
+    #[derive(Deserialize)]
+    pub struct MangaTag {
+        pub data: Vec<Wrapper<data::Tag>>,
+    }
+
+    // GET /cover
+    #[derive(Deserialize)]
+    pub struct CoverArtList {
+        pub data: Vec<Wrapper<data::CoverArt>>,
+        pub total: i32,
+    }
+
+    // GET /cover/{cover_id}
+    #[derive(Deserialize)]
+    pub struct CoverArt {
+        pub data: Wrapper<data::CoverArt>,
+    }
+
+    // GET /cover/{manga_id}
+    #[derive(Deserialize)]
+    pub struct MangaCoverArt {
+        pub data: Wrapper<data::CoverArt>,
+    }
+
     // impls
 
     impl Paginate for MangaFeed {
@@ -102,6 +140,18 @@ pub mod responses {
     }
 
     impl Paginate for MangaList {
+        fn total(&self) -> i32 {
+            self.total
+        }
+        fn concat(&mut self, mut o: Self) {
+            self.data.append(&mut o.data);
+        }
+        fn count(&self) -> i32 {
+            self.data.len() as i32
+        }
+    }
+
+    impl Paginate for CoverArtList {
         fn total(&self) -> i32 {
             self.total
         }
@@ -175,6 +225,8 @@ pub mod data {
 
         // Custom relationships
         AtHome,
+        Volume,
+        MainCoverArt,
     }
 
     #[derive(Deserialize, Debug, Clone)]
@@ -308,6 +360,31 @@ pub mod data {
         pub hash: String,
         pub data: Vec<String>,
         pub data_saver: Vec<String>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Volume {
+        pub volume: String,
+        #[serde(rename = "count")]
+        pub chapters: HashMap<String, VolumeChapter>,
+    }
+
+    #[derive(Deserialize, Clone)]
+    pub struct VolumeChapter {
+        pub chapter: String,
+        pub id: Uuid,
+        pub others: Vec<Uuid>,
+    }
+
+    #[derive(Deserialize, Clone)]
+    #[serde(rename_all = "camelCase")]
+    pub struct CoverArt {
+        pub volume: Option<String>,
+        pub file_name: String,
+        pub description: Option<String>,
+        pub locale: Option<LanguageCode>,
+        pub created_at: String,
+        pub updated_at: String,
     }
 
     // Impls

@@ -1,55 +1,43 @@
 #![allow(dead_code)]
 
 mod api;
+mod app;
 
-use api::{Api, ApiError};
-use uuid::Uuid;
+use std::io;
 
-use crate::api::structs::lang_codes::LanguageCode;
+use crossterm::{
+    event::{DisableMouseCapture, EnableMouseCapture},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
+use tui::{backend::CrosstermBackend, Terminal};
 
-#[derive(serde::Deserialize)]
-struct TmpConfig {
-    username: String,
-    password: String,
-}
+use crate::app::App;
 
 #[tokio::main]
-async fn main() -> Result<(), ApiError> {
+async fn main() {
     pretty_env_logger::init();
 
-    log::info!("Hey !");
-    let cfgstr = std::fs::read_to_string("config.json").unwrap();
-    let _cfg: TmpConfig = serde_json::from_str(&cfgstr).unwrap();
-    let mut api = Api::new();
-    //api.login(cfg.username, cfg.password).await?;
+    enable_raw_mode().unwrap();
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture).unwrap();
+    let backend = CrosstermBackend::new(stdout);
+    let terminal = Terminal::new(backend).unwrap();
 
-    let mid = Uuid::parse_str("73965527-b393-4f65-9bc3-2439ec44935a").unwrap();
+    // build app and pass terminal to it
+    let mut app = App::new(terminal);
 
-    let _ = api.manga_view(mid).await.unwrap();
-    let _ = api.manga_view(mid).await.unwrap();
-    let _ = api.manga_view(mid).await.unwrap();
-    let _ = api.manga_view(mid).await.unwrap();
-    let _ = api.manga_chapters(mid).await.unwrap();
-    let _ = api.manga_chapters(mid).await.unwrap();
-    let _ = api.manga_chapters(mid).await.unwrap();
-    let c = api.manga_chapters(mid).await.unwrap();
-    let p = api.chapter_pages(c[0]).await.unwrap();
-    let d = api.chapter_view(c[0]).await.unwrap();
-    let m = api.manga_list(Default::default(), 0, 10).await.unwrap();
-    let mut v = vec![];
-    for u in m {
-        v.push(
-            api.manga_view(u)
-                .await
-                .unwrap()
-                .title
-                .get_or_any(LanguageCode::English),
-        );
-    }
+    app.run();
 
-    println!("{p:?}");
-    println!("{d:?}");
-    println!("{v:?}");
+    // get terminal from app to reset back to normal
+    let terminal = &mut app.get_terminal().unwrap();
 
-    Ok(())
+    disable_raw_mode().unwrap();
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )
+    .unwrap();
+    terminal.show_cursor().unwrap();
 }

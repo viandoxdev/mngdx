@@ -206,10 +206,35 @@ where
     pub async fn send_simple(&self, api: &mut Api) -> Result<B, ApiError> {
         let req = self.build(api)?;
         let res = req.send().await.map_err(Into::<ApiError>::into)?;
+
+        // if status >= 400 (pretty much if error)
+        if res.status() >= StatusCode::BAD_REQUEST {
+            log::error!(
+                "Gotten error in response ({}) request {} on {}",
+                res.status(),
+                res.headers().get("X-Request-ID").unwrap().to_str().unwrap(),
+                self.endpoint
+            );
+            log::error!("{:?}", res);
+        }
+
+        log::debug!(
+            "{}",
+            self.build(api)
+                .unwrap()
+                .send()
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap()
+        );
+
         match res.status() {
             StatusCode::OK => Ok(res.json::<B>().await.expect("Error when deserializing")),
             StatusCode::BAD_REQUEST => Err(ApiError::BadRequest),
             StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Err(ApiError::Auth),
+            StatusCode::INTERNAL_SERVER_ERROR => Err(ApiError::Them),
             StatusCode::TOO_MANY_REQUESTS => {
                 let retry_ts = res.headers().get("X-RateLimit-Retry-After");
                 let retry_in: i64;
@@ -233,6 +258,13 @@ where
         if let Err(ApiError::RateLimit(retry)) = result {
             // sleep a little longer just in case
             tokio::time::sleep(retry + Duration::from_millis(500)).await;
+            result = self.send_simple(api).await;
+        }
+
+        // We don't know what, but something went wrong and its probably on mangadex, so we wait a
+        // little and resend.
+        if let Err(ApiError::Them) = result {
+            tokio::time::sleep(Duration::from_secs(1)).await;
             result = self.send_simple(api).await;
         }
 
