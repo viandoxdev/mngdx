@@ -1,18 +1,21 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{time::{SystemTime, UNIX_EPOCH}, io::Write};
+
+use crate::images;
 
 use super::AppData;
+use anyhow::Result;
 use tui::{
     backend::Backend,
     layout::{Alignment, Constraint, Direction, Layout},
     style::{Color, Style},
     widgets::{Block, BorderType, Borders, Paragraph},
-    Frame,
+    Frame, Terminal,
 };
 
-const FRAME_RATE: f64 = 30.0;
+const FRAME_RATE: f64 = 60.0;
 pub const NS_PER_FRAME: u128 = (1.0 / FRAME_RATE * 1_000_000_000.0) as u128;
 
-pub fn render<B: Backend>(f: &mut Frame<B>, data: &AppData) {
+pub fn render_widgets<B: Backend>(f: &mut Frame<B>, data: &AppData) {
     let size = f.size();
     let layout = Layout::default()
         .direction(Direction::Vertical)
@@ -46,4 +49,11 @@ pub fn render<B: Backend>(f: &mut Frame<B>, data: &AppData) {
     f.render_widget(title, layout[0]);
     f.render_widget(t, layout[1]);
     f.render_widget(d, layout[2]);
+}
+
+pub fn render_images<B: Backend + Write>(terminal: &mut Terminal<B>, data: &AppData) -> Result<()> {
+    terminal.set_cursor(0, 0)?;
+    let stdout = terminal.backend_mut();
+    images::display_image(stdout, 1, 1, 30, 10)?;
+    Ok(())
 }

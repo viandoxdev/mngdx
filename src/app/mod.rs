@@ -1,15 +1,14 @@
 use crossterm::event;
-use render::render;
-use std::sync::{
+use std::{sync::{
     atomic::AtomicBool,
     mpsc::{self, Sender},
     Arc, Mutex, MutexGuard,
-};
+}, io::Write};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tui::{backend::Backend, Terminal};
 
-use self::{events::AppEvent, render::NS_PER_FRAME};
+use self::{events::AppEvent, render::{NS_PER_FRAME, render_widgets, render_images}};
 
 mod events;
 mod render;
@@ -26,7 +25,7 @@ pub struct App<B: Backend> {
 
 impl<B: 'static> App<B>
 where
-    B: Backend + Send,
+    B: Backend + Send + Write,
 {
     pub fn new(terminal: Terminal<B>) -> Self {
         App {
@@ -64,7 +63,8 @@ where
 
                     // try to render
                     if let (Ok(data), Ok(mut terminal)) = (data_guard, terminal_guard) {
-                        let _ = terminal.draw(|f| render(f, &data));
+                        let _ = terminal.draw(|f| render_widgets(f, &data));
+                        let _ = render_images(&mut terminal, &data);
                     }
                 }
 
