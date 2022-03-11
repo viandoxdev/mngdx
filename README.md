@@ -8,4 +8,4 @@ if your terminal doesn't support the tempfile transfer mode of the kitty image p
 
 ### set\_padding
 
-On kitty only, if remote control is enabled, this feature lets mngdx change the padding size of the window (see KITTY\_PADDING in `src/main.rs`) to use more of the window.
+On kitty only, if remote control is enabled, this feature lets mngdx change the padding size of the window (see KITTY\_PADDING in [`src/consts.rs`](src/consts.rs)) to use more of the window.
