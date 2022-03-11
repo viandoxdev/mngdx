@@ -218,18 +218,6 @@ where
             log::error!("{:?}", res);
         }
 
-        log::debug!(
-            "{}",
-            self.build(api)
-                .unwrap()
-                .send()
-                .await
-                .unwrap()
-                .text()
-                .await
-                .unwrap()
-        );
-
         match res.status() {
             StatusCode::OK => Ok(res.json::<B>().await.expect("Error when deserializing")),
             StatusCode::BAD_REQUEST => Err(ApiError::BadRequest),

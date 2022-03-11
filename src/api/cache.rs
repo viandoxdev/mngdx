@@ -6,7 +6,7 @@ use super::structs::json::data::RelationshipKind;
 
 /// Simple cache with support for directed relationships
 pub struct ApiCache {
-    data: HashMap<Uuid, Box<dyn Any>>,
+    data: HashMap<Uuid, Box<dyn Any + Send + Sync>>,
     relationships: HashMap<Uuid, Vec<(Uuid, RelationshipKind)>>,
     expiration_dates: HashMap<Uuid, Instant>,
 }
@@ -21,7 +21,7 @@ impl ApiCache {
         }
     }
     /// Add element in cache
-    pub fn insert<T: Any>(&mut self, uuid: Uuid, value: T, expire: Option<Instant>) {
+    pub fn insert<T: Any + Send + Sync>(&mut self, uuid: Uuid, value: T, expire: Option<Instant>) {
         log::trace!("Add {uuid} to cache");
 
         self.data.insert(uuid, Box::new(value));

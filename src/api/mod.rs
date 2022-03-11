@@ -341,7 +341,7 @@ impl Api {
                     "{}/{}/{}/{x}",
                     ah.base_url,
                     if self.data_saver {
-                        "data_saver"
+                        "data-saver"
                     } else {
                         "data"
                     },
