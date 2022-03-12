@@ -48,6 +48,7 @@ pub fn get_terminal_winsize(fd: impl AsRawFd) -> Result<TermWinSize> {
     }
 }
 
+#[derive(Clone, PartialEq, Eq)]
 pub struct ImagePlacement {
     pub source_x: u32,
     pub source_y: u32,
@@ -55,6 +56,8 @@ pub struct ImagePlacement {
     pub source_height: Option<u32>,
     pub width: Option<u32>,
     pub height: Option<u32>,
+    pub x: u32,
+    pub y: u32,
     pub z_index: i32,
 }
 
@@ -67,6 +70,8 @@ impl Default for ImagePlacement {
             source_height: None,
             width: None,
             height: None,
+            x: 0,
+            y: 0,
             z_index: 50000,
         }
     }
@@ -95,22 +100,35 @@ fn display_image(
     // remove last coma
     placement_options.pop();
 
-    write!(stdout, "\x1b_Ga=d,d=i,i={id},p={pid},q=2;AAAA\x1b\\")?;
+    write!(stdout, "\x1b[{};{}H", placement.y, placement.x)?;
     write!(
         stdout,
-        "\x1b_Ga=p,C=1,z={},i={id},p={pid},q=2,{placement_options};AAAA\x1b\\",
+        "\x1b_Ga=p,C=1,z={},i={id},p={pid},{placement_options};AAAA\x1b\\",
         placement.z_index
     )?;
     stdout.flush()?;
+    log::trace!("placement new    {id} {pid}");
+    Ok(())
+}
+
+fn delete_all_placements(stdout: &mut impl Write) -> Result<()> {
+    write!(stdout, "\x1b_Ga=d,d=a;AAAA\x1b\\")?;
+    stdout.flush()?;
+    log::trace!("placement delete ALL");
+    Ok(())
+}
+
+fn delete_placement(stdout: &mut impl Write, id: u32, pid: u32) -> Result<()> {
+    write!(stdout, "\x1b_Ga=d,d=i,i={id},p={pid};AAAA\x1b\\")?;
+    stdout.flush()?;
+    log::trace!("placement delete {id} {pid}");
     Ok(())
 }
 
 fn unload_image(stdout: &mut impl Write, id: u32) -> Result<()> {
-    // delete placement
-    write!(stdout, "\x1b_Ga=d,q=2,d=a,i={id};AAAA\x1b\\")?;
-    // delete image from memory
-    write!(stdout, "\x1b_Ga=d,q=2,d=A,i={id};AAAA\x1b\\")?;
+    write!(stdout, "\x1b_Ga=d,d=i,i={id};AAAA\x1b\\")?;
     stdout.flush()?;
+    log::trace!("image unload {id}");
     Ok(())
 }
 
@@ -122,7 +140,7 @@ fn load_image(stdout: &mut impl Write, id: u32, image: &DynamicImage) -> Result<
 
     write!(
         stdout,
-        "\x1b_Gf=32,i={id},s={},v={},q=2,t=t;{}\x1b\\",
+        "\x1b_Gf=32,i={id},s={},v={},t=t;{}\x1b\\",
         image.width(),
         image.height(),
         base64::encode(
@@ -132,7 +150,7 @@ fn load_image(stdout: &mut impl Write, id: u32, image: &DynamicImage) -> Result<
     )?;
     writeln!(stdout)?;
     stdout.flush()?;
-
+    log::trace!("image load   {id}");
     Ok(())
 }
 
@@ -161,12 +179,12 @@ fn load_image(stdout: &mut impl Write, id: u32, image: &DynamicImage) -> Result<
             "m=1".to_string()
         };
 
-        write!(stdout, "\x1b_G{options},q=2;{payload}\x1b\\")?;
+        write!(stdout, "\x1b_G{options};{payload}\x1b\\")?;
         stdout.flush()?;
 
         i += 1;
     }
-
+    log::trace!("image load   {id}");
     Ok(())
 }
 
@@ -190,8 +208,12 @@ fn store_in_tmp_file(buf: &[u8]) -> Result<std::path::PathBuf> {
 /// for now).
 pub struct ImageManager {
     images: HashMap<u32, Option<DynamicImage>>,
-    // currently loaded images (in the terminal)
+    // Currently loaded images (in the terminal)
     loaded: VecDeque<u32>,
+    // Currrent placements (in the terminal)
+    state: Vec<(u32, ImagePlacement)>,
+    // Placement specified by the user
+    requirements: Vec<(u32, ImagePlacement)>,
 }
 
 impl ImageManager {
@@ -199,6 +221,8 @@ impl ImageManager {
         Self {
             images: HashMap::new(),
             loaded: VecDeque::with_capacity(IMAGE_SLOTS as usize),
+            state: Vec::new(),
+            requirements: Vec::new(),
         }
     }
 
@@ -237,6 +261,7 @@ impl ImageManager {
         // There is no need to unload any image, as they will get unloaded when necessary on image
         // display.
         self.images.clear();
+        self.requirements.clear();
     }
 
     fn is_loaded(&self, id: u32) -> bool {
@@ -258,6 +283,7 @@ impl ImageManager {
             // unload image if all slots are full
             if self.loaded.len() == IMAGE_SLOTS as usize {
                 let id = self.loaded.back().unwrap();
+                log::debug!("unloading {id}");
                 unload_image(stdout, *id)?;
                 // pop after unload in case unload fails
                 self.loaded.pop_back();
@@ -273,6 +299,10 @@ impl ImageManager {
         }
     }
 
+    pub fn hide_all_images(&mut self) {
+        self.requirements.clear();
+    }
+
     /// Force the next displayed images to be reloaded, this must be used if the terminal unloads
     /// the loaded images or they won't render. (for any reason). Using this with loaded images can
     /// leak images, making them stay loaded and take up memory.
@@ -280,9 +310,34 @@ impl ImageManager {
         self.loaded.clear();
     }
 
+    pub fn draw(&mut self, stdout: &mut impl Write) -> Result<()> {
+        let reqs = self.requirements.clone();
+        // remove all already satisfied requirements and put them into new_state
+        let (mut new_state, reqs): (Vec<(u32, ImagePlacement)>, Vec<(u32, ImagePlacement)>) = reqs.into_iter().partition(|e| self.state.contains(e));
+
+        // display anything that isn't displayed yet
+        for r in reqs {
+            self.ensure_loaded(stdout, r.0)?;
+            display_image(stdout, r.0, 1, r.1.clone())?;
+            new_state.push(r);
+        }
+        
+        // hide any placement that was in state but not in new_state
+        for s in self.state.iter().filter(|e| !new_state.contains(e)) {
+            delete_placement(stdout, s.0, 1)?;
+        }
+
+        self.state = new_state;
+
+        Ok(())
+    }
+
+    pub fn hide_image(&mut self, id: u32) {
+        self.requirements.retain(|e| e.0 != id);
+    }
+
     pub fn display_image(
         &mut self,
-        stdout: &mut impl Write,
         id: u32,
         placement: ImagePlacement,
     ) -> Result<()> {
@@ -290,43 +345,24 @@ impl ImageManager {
             return Err(Error::msg("Image doesn't exist."));
         }
 
-        self.ensure_loaded(stdout, id)?;
-        display_image(stdout, id, 0, placement)?;
+        // if this image already has a placement, overwrite it
+        if let Some(index) = self.requirements.iter().position(|e| e.0 == id) {
+            self.requirements[index] = (id, placement);
+        } else {
+            self.requirements.push((id, placement));
+        }
+
         Ok(())
     }
-}
 
-// This is put in another trait because to avoid coupling ImageManager with tui-rs. This trait
-// serves as a place to put method that interract with the two of those.
-
-pub trait ImageManagerTerminalExt<B>
-where
-    B: Backend,
-{
-    fn display_image_best_fit(
+    pub fn display_image_best_fit(
         &mut self,
-        term: &mut Terminal<B>,
-        id: u32,
-        rect: Rect,
-        ws: &TermWinSize,
-    ) -> Result<()>;
-}
-
-impl<B> ImageManagerTerminalExt<B> for ImageManager
-where
-    B: Backend + Write,
-{
-    fn display_image_best_fit(
-        &mut self,
-        term: &mut Terminal<B>,
         id: u32,
         rect: Rect,
         ws: &TermWinSize,
     ) -> Result<()> {
         let width = rect.width as u32;
         let height = rect.height as u32;
-        let x = rect.x as u32;
-        let y = rect.y as u32;
 
         let image = self
             .get_image(id)
@@ -352,21 +388,16 @@ where
         };
 
         let offset = ((width - pwidth) / 2, (height - pheight) / 2);
-
-        term.set_cursor((x + offset.0) as u16, (x + offset.1) as u16)?;
-
         self.display_image(
-            term.backend_mut(),
             id,
             ImagePlacement {
                 width: Some(pwidth),
                 height: Some(pheight),
+                x: rect.x as u32 + offset.0,
+                y: rect.y as u32 + offset.1,
                 ..Default::default()
             },
         )?;
-
-        // reset cursor
-        term.set_cursor(x as u16, y as u16)?;
         Ok(())
     }
 }

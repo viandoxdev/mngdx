@@ -1,3 +1,4 @@
+#![warn(clippy::disallowed_types)]
 #![allow(dead_code)]
 #![feature(once_cell)]
 #![feature(min_specialization)]
@@ -51,7 +52,7 @@ fn main() -> Result<()> {
     app.run();
 
     // get terminal from app to reset back to normal
-    let terminal = &mut app.get_terminal().unwrap();
+    let terminal = &mut app.get_terminal();
 
     disable_raw_mode().unwrap();
     execute!(

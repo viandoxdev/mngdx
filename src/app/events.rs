@@ -13,6 +13,8 @@ use uuid::Uuid;
 pub enum AppEvent {
     Dummy(String),
     Start,
+    Next,
+    Previous,
     Quit,
     ReloadImages,
 }
@@ -36,17 +38,23 @@ pub fn process_event<B: Backend + Write + Send + 'static>(
                 let chapter = chapters.choose(&mut rand::thread_rng()).unwrap();
                 let pages = api.chapter_pages(*chapter).await.unwrap();
 
-                comps.reader.lock().unwrap().read(pages, components);
-            });
+                comps.reader.lock().read(pages, components);
+            }).ok();
+        }
+        AppEvent::Next => {
+            comps.reader.lock().next();
+        }
+        AppEvent::Previous => {
+            comps.reader.lock().previous();
         }
         AppEvent::Dummy(s) => {
-            comps.state.lock().unwrap().block_name = s;
+            comps.state.lock().block_name = s;
         }
         AppEvent::Quit => {
             should_stop.store(true, std::sync::atomic::Ordering::Relaxed);
         }
         AppEvent::ReloadImages => {
-            let _ = comps.image_manager.lock().unwrap().force_reload_images();
+            let _ = comps.image_manager.lock().force_reload_images();
         }
     }
 }
@@ -66,6 +74,22 @@ impl TryFrom<Event> for AppEvent {
                 code: KeyCode::Char('r'),
                 modifiers: KeyModifiers::NONE,
             }) => Ok(AppEvent::ReloadImages),
+
+            Event::Key(KeyEvent {
+                code: KeyCode::Right,
+                modifiers: KeyModifiers::NONE
+            }) | Event::Key(KeyEvent {
+                code: KeyCode::Down,
+                modifiers: KeyModifiers::NONE
+            }) => Ok(AppEvent::Next),
+
+            Event::Key(KeyEvent {
+                code: KeyCode::Left,
+                modifiers: KeyModifiers::NONE
+            }) | Event::Key(KeyEvent {
+                code: KeyCode::Up,
+                modifiers: KeyModifiers::NONE
+            }) => Ok(AppEvent::Previous),
 
             Event::Mouse(me) => Ok(AppEvent::Dummy(format!("{me:?}"))),
 

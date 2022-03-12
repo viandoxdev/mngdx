@@ -2,7 +2,8 @@ use crate::app::render::FRAME;
 use crate::consts::EXECUTOR_THREAD_COUNT;
 use crate::images::{self, ImageManager};
 use anyhow::{Result, Error};
-use crossterm::event;
+use crossterm::event::{self, Event, KeyEvent, KeyModifiers, KeyCode};
+use parking_lot::{Mutex, MutexGuard};
 use std::future::Future;
 use std::pin::Pin;
 use std::thread::{self, JoinHandle};
@@ -13,7 +14,7 @@ use std::{
     sync::{
         atomic::AtomicBool,
         mpsc::{self, Sender},
-        Arc, Mutex, MutexGuard,
+        Arc
     },
 };
 use tui::{backend::Backend, Terminal};
@@ -21,10 +22,7 @@ use tui::{backend::Backend, Terminal};
 use self::reader::{Reader, PageReader};
 use self::render::render;
 use self::state::AppState;
-use self::{
-    events::AppEvent,
-    render::{render_images, render_widgets},
-};
+use self::events::AppEvent;
 
 mod events;
 mod render;
@@ -127,7 +125,7 @@ where
             let should_stop = stop.clone();
 
             spawn_named("Render", move || {
-                let mut time = Vec::with_capacity(600);
+                let mut time = Vec::with_capacity(6000);
                 let mut last_frame;
                 loop {
                     if should_stop.load(std::sync::atomic::Ordering::Relaxed) {
@@ -136,7 +134,7 @@ where
 
                     last_frame = Instant::now();
                     let ws = images::get_terminal_winsize(fd).unwrap();
-                    render(comps.clone(), &ws);
+                    let _ = render(comps.clone(), &ws);
 
                     // wait until next frame
                     let since_last_frame = last_frame.elapsed();
@@ -191,7 +189,7 @@ where
                             break;
                         }
 
-                        if let Ok(task) = receiver.lock().unwrap().recv() {
+                        if let Ok(task) = receiver.lock().recv() {
                             log::debug!("Executor {i} received task");
                             handle.block_on(async move {
                                 task.await;
@@ -233,31 +231,74 @@ where
 
         // Input "thread", has to be on main because ¯\_(ツ)_/¯
         {
+            let mut escape = false;
+            let enter = vec![
+                Event::Key(KeyEvent{code: KeyCode::Char('_'), modifiers: KeyModifiers::ALT}),
+                Event::Key(KeyEvent{code: KeyCode::Char('G'), modifiers: KeyModifiers::SHIFT}),
+            ];
+            let mut enter_cursor = 0;
+            let leave = vec![
+                Event::Key(KeyEvent{code: KeyCode::Char('\\'), modifiers: KeyModifiers::ALT}),
+            ];
+            let mut leave_cursor = 0;
+            let mut msg = String::new();
             loop {
                 if stop.load(std::sync::atomic::Ordering::Relaxed) {
                     break;
                 }
 
-                if let Some(event) = Self::event() {
-                    let _ = event_producer.send(event);
+                if event::poll(Duration::from_millis(50)).is_ok() {
+                    let event = event::read().ok();
+                    if let Some(event) = event {
+                        if event == enter[enter_cursor] {
+                            enter_cursor += 1;
+
+                            if enter_cursor == enter.len() {
+                                escape = true;
+                                enter_cursor = 0;
+                            }
+                        } else {
+                            enter_cursor = 0;
+                        }
+
+                        if event == leave[leave_cursor] {
+                            leave_cursor += 1;
+
+                            if leave_cursor == leave.len() {
+                                log::trace!("Kitty message: {msg}");
+                                // if message is saying x doesn't exist
+                                if msg.contains("ENOENT") {
+                                    // force everything to be reloaded.
+                                    let mut stdout = self.components.terminal.lock();
+                                    let mut im = self.components.image_manager.lock();
+                                    im.unload_all(stdout.backend_mut()).ok();
+                                    // requeue draw as the last one failed
+                                    im.draw(stdout.backend_mut()).ok();
+                                }
+                                msg.clear();
+                                escape = false;
+                                leave_cursor = 0;
+                            }
+                        } else {
+                            leave_cursor = 0;
+                        }
+
+                        if escape {
+                            if let Event::Key(KeyEvent { code: KeyCode::Char(c), .. }) = event {
+                                msg.push(c);
+                            }
+                        } else if let Ok(event) = event.try_into() {
+                            let _ = event_producer.send(event);
+                            continue;
+                        }
+                    }
                 }
             }
         }
     }
 
     /// get a mutex guard to the terminal
-    pub fn get_terminal(&self) -> Option<MutexGuard<Terminal<B>>> {
-        self.components.terminal.lock().ok()
-    }
-
-    /// tries to read and convert an event into an AppEvent.
-    pub fn event() -> Option<AppEvent> {
-        // if no event in 50ms
-        if !event::poll(Duration::from_millis(50)).ok()? {
-            return None;
-        }
-
-        let event = event::read().ok()?;
-        event.try_into().ok()
+    pub fn get_terminal(&self) -> MutexGuard<Terminal<B>> {
+        self.components.terminal.lock()
     }
 }

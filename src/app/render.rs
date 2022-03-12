@@ -6,7 +6,7 @@ use std::{
 
 use crate::{
     consts::FRAME_RATE,
-    images::{ImageManagerTerminalExt, TermWinSize},
+    images::TermWinSize,
 };
 
 use anyhow::Result;
@@ -15,7 +15,7 @@ use tui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Style},
     widgets::{Block, BorderType, Borders, Paragraph},
-    Frame, Terminal,
+    Frame,
 };
 
 use super::{state::AppState, AppComponents};
@@ -62,18 +62,19 @@ pub fn render_images<B: Backend + Write + Send + 'static>(
     comps: AppComponents<B>,
     ws: &TermWinSize,
 ) -> Result<()> {
-    comps.reader.lock().unwrap().draw(Rect {
+    comps.reader.lock().draw(Rect {
         x: 0,
         y: 0,
         width: ws.cols,
         height: ws.rows,
-    }, ws, comps.terminal.lock().unwrap().borrow_mut(), comps.image_manager.lock().unwrap().borrow_mut())?;
+    }, ws, comps.terminal.lock().borrow_mut(), comps.image_manager.lock().borrow_mut())?;
+    comps.image_manager.lock().draw(comps.terminal.lock().backend_mut())?;
         
     Ok(())
 }
 
 pub fn render<B: Backend + Write + Send + 'static>(comps: AppComponents<B>, ws: &TermWinSize) -> Result<()> {
-    comps.terminal.lock().unwrap().draw(|f| render_widgets(f, comps.state.lock().unwrap().borrow_mut()))?;
+    comps.terminal.lock().draw(|f| render_widgets(f, comps.state.lock().borrow_mut()))?;
     render_images(comps, ws)?;
     Ok(())
 }

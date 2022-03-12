@@ -1,13 +1,13 @@
 // Here a reader is a struct that is used to read a chapter (input and render)
 
-use std::{sync::{Mutex, Arc}, io::Write};
+use std::io::Write;
 
 use anyhow::Result;
 use tui::{Terminal, backend::Backend, layout::Rect};
 
-use crate::images::{ImageManager, ImageManagerTerminalExt, TermWinSize};
+use crate::images::{ImageManager, TermWinSize};
 
-use super::{state::AppState, AppComponents};
+use super::AppComponents;
 
 pub trait Reader<B: Backend + Write + Send> {
     /// "Advence" the reading (i.e. next page)
@@ -23,6 +23,7 @@ pub trait Reader<B: Backend + Write + Send> {
 pub struct PageReader {
     pages: usize,
     current: usize,
+    dirty: bool,
 }
 
 impl PageReader {
@@ -30,6 +31,7 @@ impl PageReader {
         Self {
             pages: 0,
             current: 0,
+            dirty: false,
         }
     }
 }
@@ -45,11 +47,13 @@ impl<B: Backend + Write + Send + 'static> Reader<B> for PageReader {
 
     fn draw(&self, area: Rect, ws: &TermWinSize, term: &mut Terminal<B>, image_manager: &mut ImageManager) -> Result<()> {
         let image_id = self.current as u32 + 1;
-        image_manager.display_image_best_fit(term, image_id, area, ws)?;
+        image_manager.hide_all_images();
+        image_manager.display_image_best_fit(image_id, area, ws)?;
         Ok(())
     }
 
     fn read(&mut self, chapter: Vec<String>, mut comps: AppComponents<B>) {
+        log::debug!("Reader read");
         self.pages = chapter.len();
         self.current = 0;
         for (id, url) in chapter.into_iter().enumerate() {
@@ -57,7 +61,7 @@ impl<B: Backend + Write + Send + 'static> Reader<B> for PageReader {
             let _ = comps.task_producer.schedule(async move {
                 let img = ImageManager::image_from_url(url).await.unwrap();
                 log::debug!("Downloaded page");
-                image_manager.lock().unwrap().add_image(id as u32 + 1, img);
+                image_manager.lock().add_image(id as u32 + 1, img);
                 log::debug!("Added page to IM");
             });
         }
