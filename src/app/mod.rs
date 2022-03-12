@@ -1,6 +1,7 @@
 use crate::app::render::FRAME;
 use crate::consts::EXECUTOR_THREAD_COUNT;
-use crate::images;
+use crate::images::{self, ImageManager};
+use anyhow::{Result, Error};
 use crossterm::event;
 use std::future::Future;
 use std::pin::Pin;
@@ -17,6 +18,8 @@ use std::{
 };
 use tui::{backend::Backend, Terminal};
 
+use self::reader::{Reader, PageReader};
+use self::render::render;
 use self::state::AppState;
 use self::{
     events::AppEvent,
@@ -26,11 +29,11 @@ use self::{
 mod events;
 mod render;
 mod state;
+pub mod reader;
 pub mod time;
 
-pub struct App<B: Backend> {
-    state: Arc<Mutex<AppState>>,
-    terminal: Arc<Mutex<Terminal<B>>>,
+pub struct App<B: Backend + Write + Send> {
+    components: AppComponents<B>,
     fd: RawFd,
 }
 
@@ -46,12 +49,46 @@ where
         .unwrap()
 }
 
-// schedules a task to be run by the executor thread
-pub fn schedule_task<F: Future<Output = ()> + Send + 'static>(
-    task_producer: &mut Sender<Pin<Box<dyn Future<Output = ()> + Send>>>,
-    f: F,
-) {
-    task_producer.send(Box::pin(f)).unwrap();
+#[derive(Clone)]
+pub struct TaskProducer {
+    inner: Option<Sender<Pin<Box<dyn Future<Output = ()> + Send>>>>,
+}
+
+impl TaskProducer {
+    pub fn new() -> Self {
+        Self {
+            inner: None,
+        }
+    }
+    pub fn init(&mut self, sender: Sender<Pin<Box<dyn Future<Output = ()> + Send>>>) {
+        self.inner.replace(sender);
+    }
+    pub fn schedule<F: Future<Output = ()> + Send + 'static>(&mut self, task: F) -> Result<()> {
+        self.inner.as_mut().ok_or_else(|| Error::msg("Task scheduled on uninitialized producer."))?
+            .send(Box::pin(task)).map_err(|_| Error::msg("Error when scheduling task."))
+    }
+}
+
+pub struct AppComponents<B: Backend + Send + Write> {
+    pub terminal: Arc<Mutex<Terminal<B>>>,
+    pub state: Arc<Mutex<AppState>>,
+    pub reader: Arc<Mutex<dyn Reader<B> + Send>>,
+    pub image_manager: Arc<Mutex<ImageManager>>,
+    pub task_producer: TaskProducer,
+}
+
+// Can't derive clone because derive thinks T needs Clone to clone Arc<T>,
+// and assumes that B must be Clone, when it clearly doesn't have to.
+impl<B: Backend + Send + Write> Clone for AppComponents<B> {
+    fn clone(&self) -> Self {
+        Self {
+            terminal: self.terminal.clone(),
+            state: self.state.clone(),
+            reader: self.reader.clone(),
+            image_manager: self.image_manager.clone(),
+            task_producer: self.task_producer.clone(),
+        }
+    }
 }
 
 impl<B: 'static> App<B>
@@ -60,16 +97,24 @@ where
 {
     pub fn new(terminal: Terminal<B>, fd: RawFd) -> Self {
         App {
-            state: Arc::new(Mutex::new(AppState::new())),
-            terminal: Arc::new(Mutex::new(terminal)),
+            components: AppComponents {
+                state: Arc::new(Mutex::new(AppState::new())),
+                terminal: Arc::new(Mutex::new(terminal)),
+                reader: Arc::new(Mutex::new(PageReader::new())),
+                image_manager: Arc::new(Mutex::new(ImageManager::new())),
+                task_producer: TaskProducer::new(),
+            },
             fd,
         }
     }
 
     pub fn run(&mut self) {
         let (event_producer, event_receciver) = mpsc::channel();
-        let (mut task_producer, task_receiver) =
+        let (task_sender, task_receiver) =
             mpsc::channel::<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>();
+
+        self.components.task_producer.init(task_sender);
+
         // boolean shared across all threads to know when to stop.
         let stop = Arc::new(AtomicBool::new(false));
 
@@ -77,8 +122,7 @@ where
 
         // Rendering thread
         {
-            let state_mutex = self.state.clone();
-            let terminal_mutex = self.terminal.clone();
+            let comps = self.components.clone();
             let fd = self.fd;
             let should_stop = stop.clone();
 
@@ -90,20 +134,9 @@ where
                         break;
                     }
 
-                    {
-                        last_frame = Instant::now();
-
-                        let ws = images::get_terminal_winsize(fd).unwrap();
-                        // lock access to state and terminal
-                        let state_guard = state_mutex.lock();
-                        let terminal_guard = terminal_mutex.lock();
-
-                        // try to render
-                        if let (Ok(mut state), Ok(mut terminal)) = (state_guard, terminal_guard) {
-                            let _ = terminal.draw(|f| render_widgets(f, &state));
-                            let _ = render_images(&mut terminal, &mut state, &ws);
-                        }
-                    }
+                    last_frame = Instant::now();
+                    let ws = images::get_terminal_winsize(fd).unwrap();
+                    render(comps.clone(), &ws);
 
                     // wait until next frame
                     let since_last_frame = last_frame.elapsed();
@@ -159,6 +192,7 @@ where
                         }
 
                         if let Ok(task) = receiver.lock().unwrap().recv() {
+                            log::debug!("Executor {i} received task");
                             handle.block_on(async move {
                                 task.await;
                             });
@@ -180,8 +214,7 @@ where
 
         // Event loop thread
         {
-            let state_mutex = self.state.clone();
-            let terminal_mutex = self.terminal.clone();
+            let comps = self.components.clone();
             let should_stop = stop.clone();
             spawn_named("Event Loop", move || loop {
                 if should_stop.load(std::sync::atomic::Ordering::Relaxed) {
@@ -191,10 +224,8 @@ where
                 if let Ok(event) = event_receciver.recv() {
                     events::process_event(
                         event,
-                        state_mutex.clone(),
-                        terminal_mutex.clone(),
+                        comps.clone(),
                         &should_stop,
-                        &mut task_producer,
                     );
                 }
             });
@@ -216,7 +247,7 @@ where
 
     /// get a mutex guard to the terminal
     pub fn get_terminal(&self) -> Option<MutexGuard<Terminal<B>>> {
-        self.terminal.lock().ok()
+        self.components.terminal.lock().ok()
     }
 
     /// tries to read and convert an event into an AppEvent.

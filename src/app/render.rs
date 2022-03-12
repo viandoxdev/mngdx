@@ -1,7 +1,7 @@
 use std::{
     io::Write,
     lazy::SyncLazy,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH}, borrow::BorrowMut,
 };
 
 use crate::{
@@ -18,11 +18,11 @@ use tui::{
     Frame, Terminal,
 };
 
-use super::state::AppState;
+use super::{state::AppState, AppComponents};
 
 pub static FRAME: SyncLazy<Duration> = SyncLazy::new(|| Duration::from_secs(1) / FRAME_RATE);
 
-pub fn render_widgets<B: Backend>(f: &mut Frame<B>, state: &AppState) {
+pub fn render_widgets<B: Backend + Write + Send>(f: &mut Frame<B>, state: &AppState) {
     let size = f.size();
     let layout = Layout::default()
         .direction(Direction::Vertical)
@@ -58,21 +58,22 @@ pub fn render_widgets<B: Backend>(f: &mut Frame<B>, state: &AppState) {
     f.render_widget(d, layout[2]);
 }
 
-pub fn render_images<B: Backend + Write>(
-    terminal: &mut Terminal<B>,
-    state: &mut AppState,
+pub fn render_images<B: Backend + Write + Send + 'static>(
+    comps: AppComponents<B>,
     ws: &TermWinSize,
 ) -> Result<()> {
-    let _ = state.image_manager.display_image_best_fit(
-        terminal,
-        1,
-        Rect {
-            x: 0,
-            y: 0,
-            width: ws.cols,
-            height: ws.rows,
-        },
-        ws,
-    );
+    comps.reader.lock().unwrap().draw(Rect {
+        x: 0,
+        y: 0,
+        width: ws.cols,
+        height: ws.rows,
+    }, ws, comps.terminal.lock().unwrap().borrow_mut(), comps.image_manager.lock().unwrap().borrow_mut())?;
+        
+    Ok(())
+}
+
+pub fn render<B: Backend + Write + Send + 'static>(comps: AppComponents<B>, ws: &TermWinSize) -> Result<()> {
+    comps.terminal.lock().unwrap().draw(|f| render_widgets(f, comps.state.lock().unwrap().borrow_mut()))?;
+    render_images(comps, ws)?;
     Ok(())
 }

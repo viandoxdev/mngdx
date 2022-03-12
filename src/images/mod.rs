@@ -10,6 +10,8 @@ use image::DynamicImage;
 use reqwest::IntoUrl;
 use tui::{backend::Backend, layout::Rect, Terminal};
 
+use crate::consts::IMAGE_SLOTS;
+
 // this is the same as libc::winsize, but I didn't want libc to be exposed (and this implements
 // debug)
 #[derive(Debug)]
@@ -186,17 +188,17 @@ fn store_in_tmp_file(buf: &[u8]) -> Result<std::path::PathBuf> {
 
 /// Struct to help manage and display image in the terminal (only kitty image protocol supported
 /// for now).
-pub struct ImageManager<const SLOTS: u32> {
+pub struct ImageManager {
     images: HashMap<u32, Option<DynamicImage>>,
     // currently loaded images (in the terminal)
     loaded: VecDeque<u32>,
 }
 
-impl<const SLOTS: u32> ImageManager<SLOTS> {
+impl ImageManager {
     pub fn new() -> Self {
         Self {
             images: HashMap::new(),
-            loaded: VecDeque::with_capacity(SLOTS as usize),
+            loaded: VecDeque::with_capacity(IMAGE_SLOTS as usize),
         }
     }
 
@@ -214,9 +216,9 @@ impl<const SLOTS: u32> ImageManager<SLOTS> {
         Ok(())
     }
 
-    pub async fn add_from_url(&mut self, id: u32, url: impl IntoUrl) -> Result<()> {
+    pub async fn image_from_url(url: impl IntoUrl) -> Result<DynamicImage> {
         let bytes = reqwest::get(url).await?.bytes().await?;
-        self.add_from_memory(id, &bytes)
+        Ok(image::load_from_memory(&bytes)?)
     }
 
     pub fn get_image(&self, id: u32) -> Option<&DynamicImage> {
@@ -254,7 +256,7 @@ impl<const SLOTS: u32> ImageManager<SLOTS> {
             // into the input loop.
 
             // unload image if all slots are full
-            if self.loaded.len() == SLOTS as usize {
+            if self.loaded.len() == IMAGE_SLOTS as usize {
                 let id = self.loaded.back().unwrap();
                 unload_image(stdout, *id)?;
                 // pop after unload in case unload fails
@@ -310,7 +312,7 @@ where
     ) -> Result<()>;
 }
 
-impl<B, const S: u32> ImageManagerTerminalExt<B> for ImageManager<S>
+impl<B> ImageManagerTerminalExt<B> for ImageManager
 where
     B: Backend + Write,
 {
