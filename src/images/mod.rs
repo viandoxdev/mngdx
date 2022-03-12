@@ -8,7 +8,7 @@ use std::{
 use anyhow::{Error, Result};
 use image::DynamicImage;
 use reqwest::IntoUrl;
-use tui::{backend::Backend, layout::Rect, Terminal};
+use tui::layout::Rect;
 
 use crate::consts::IMAGE_SLOTS;
 
@@ -204,6 +204,8 @@ fn store_in_tmp_file(buf: &[u8]) -> Result<std::path::PathBuf> {
     Ok(path)
 }
 
+type IdentifiedImagePlacment = (u32, ImagePlacement);
+
 /// Struct to help manage and display image in the terminal (only kitty image protocol supported
 /// for now).
 pub struct ImageManager {
@@ -213,7 +215,7 @@ pub struct ImageManager {
     // Currrent placements (in the terminal)
     state: Vec<(u32, ImagePlacement)>,
     // Placement specified by the user
-    requirements: Vec<(u32, ImagePlacement)>,
+    requirements: Vec<IdentifiedImagePlacment>,
 }
 
 impl ImageManager {
@@ -313,7 +315,8 @@ impl ImageManager {
     pub fn draw(&mut self, stdout: &mut impl Write) -> Result<()> {
         let reqs = self.requirements.clone();
         // remove all already satisfied requirements and put them into new_state
-        let (mut new_state, reqs): (Vec<(u32, ImagePlacement)>, Vec<(u32, ImagePlacement)>) = reqs.into_iter().partition(|e| self.state.contains(e));
+        let (mut new_state, reqs): (Vec<IdentifiedImagePlacment>, Vec<IdentifiedImagePlacment>) =
+            reqs.into_iter().partition(|e| self.state.contains(e));
 
         // display anything that isn't displayed yet
         for r in reqs {
@@ -321,7 +324,7 @@ impl ImageManager {
             display_image(stdout, r.0, 1, r.1.clone())?;
             new_state.push(r);
         }
-        
+
         // hide any placement that was in state but not in new_state
         for s in self.state.iter().filter(|e| !new_state.contains(e)) {
             delete_placement(stdout, s.0, 1)?;
@@ -336,11 +339,7 @@ impl ImageManager {
         self.requirements.retain(|e| e.0 != id);
     }
 
-    pub fn display_image(
-        &mut self,
-        id: u32,
-        placement: ImagePlacement,
-    ) -> Result<()> {
+    pub fn display_image(&mut self, id: u32, placement: ImagePlacement) -> Result<()> {
         if self.get_image(id).is_none() {
             return Err(Error::msg("Image doesn't exist."));
         }
@@ -355,12 +354,7 @@ impl ImageManager {
         Ok(())
     }
 
-    pub fn display_image_best_fit(
-        &mut self,
-        id: u32,
-        rect: Rect,
-        ws: &TermWinSize,
-    ) -> Result<()> {
+    pub fn display_image_best_fit(&mut self, id: u32, rect: Rect, ws: &TermWinSize) -> Result<()> {
         let width = rect.width as u32;
         let height = rect.height as u32;
 

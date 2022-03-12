@@ -3,7 +3,7 @@
 use std::io::Write;
 
 use anyhow::Result;
-use tui::{Terminal, backend::Backend, layout::Rect};
+use tui::{backend::Backend, layout::Rect, Terminal};
 
 use crate::images::{ImageManager, TermWinSize};
 
@@ -14,7 +14,13 @@ pub trait Reader<B: Backend + Write + Send> {
     fn next(&mut self);
     /// Next, but the other way
     fn previous(&mut self);
-    fn draw(&self, area: Rect, ws: &TermWinSize, term: &mut Terminal<B>, image_manager: &mut ImageManager) -> Result<()>;
+    fn draw(
+        &self,
+        area: Rect,
+        ws: &TermWinSize,
+        term: &mut Terminal<B>,
+        image_manager: &mut ImageManager,
+    ) -> Result<()>;
     /// Start reading a chapter (vec of url to pages)
     fn read(&mut self, chapter: Vec<String>, comps: AppComponents<B>);
 }
@@ -45,7 +51,13 @@ impl<B: Backend + Write + Send + 'static> Reader<B> for PageReader {
         self.current = self.current.saturating_sub(1);
     }
 
-    fn draw(&self, area: Rect, ws: &TermWinSize, term: &mut Terminal<B>, image_manager: &mut ImageManager) -> Result<()> {
+    fn draw(
+        &self,
+        area: Rect,
+        ws: &TermWinSize,
+        _term: &mut Terminal<B>,
+        image_manager: &mut ImageManager,
+    ) -> Result<()> {
         let image_id = self.current as u32 + 1;
         image_manager.hide_all_images();
         image_manager.display_image_best_fit(image_id, area, ws)?;
@@ -67,4 +79,3 @@ impl<B: Backend + Write + Send + 'static> Reader<B> for PageReader {
         }
     }
 }
-

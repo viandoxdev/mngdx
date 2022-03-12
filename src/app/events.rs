@@ -27,19 +27,22 @@ pub fn process_event<B: Backend + Write + Send + 'static>(
     match event {
         AppEvent::Start => {
             let components = comps.clone();
-            comps.task_producer.schedule(async move {
-                let mut api = Api::new();
-                let chapters = api
-                    .manga_chapters(
-                        Uuid::parse_str("e78a489b-6632-4d61-b00b-5206f5b8b22b").unwrap(),
-                    )
-                    .await
-                    .unwrap();
-                let chapter = chapters.choose(&mut rand::thread_rng()).unwrap();
-                let pages = api.chapter_pages(*chapter).await.unwrap();
+            comps
+                .task_producer
+                .schedule(async move {
+                    let mut api = Api::new();
+                    let chapters = api
+                        .manga_chapters(
+                            Uuid::parse_str("e78a489b-6632-4d61-b00b-5206f5b8b22b").unwrap(),
+                        )
+                        .await
+                        .unwrap();
+                    let chapter = chapters.choose(&mut rand::thread_rng()).unwrap();
+                    let pages = api.chapter_pages(*chapter).await.unwrap();
 
-                comps.reader.lock().read(pages, components);
-            }).ok();
+                    comps.reader.lock().read(pages, components);
+                })
+                .ok();
         }
         AppEvent::Next => {
             comps.reader.lock().next();
@@ -77,18 +80,20 @@ impl TryFrom<Event> for AppEvent {
 
             Event::Key(KeyEvent {
                 code: KeyCode::Right,
-                modifiers: KeyModifiers::NONE
-            }) | Event::Key(KeyEvent {
+                modifiers: KeyModifiers::NONE,
+            })
+            | Event::Key(KeyEvent {
                 code: KeyCode::Down,
-                modifiers: KeyModifiers::NONE
+                modifiers: KeyModifiers::NONE,
             }) => Ok(AppEvent::Next),
 
             Event::Key(KeyEvent {
                 code: KeyCode::Left,
-                modifiers: KeyModifiers::NONE
-            }) | Event::Key(KeyEvent {
+                modifiers: KeyModifiers::NONE,
+            })
+            | Event::Key(KeyEvent {
                 code: KeyCode::Up,
-                modifiers: KeyModifiers::NONE
+                modifiers: KeyModifiers::NONE,
             }) => Ok(AppEvent::Previous),
 
             Event::Mouse(me) => Ok(AppEvent::Dummy(format!("{me:?}"))),

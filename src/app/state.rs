@@ -1,4 +1,3 @@
-
 pub struct AppState {
     pub block_name: String,
 }

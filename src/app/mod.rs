@@ -1,8 +1,8 @@
 use crate::app::render::FRAME;
 use crate::consts::EXECUTOR_THREAD_COUNT;
 use crate::images::{self, ImageManager};
-use anyhow::{Result, Error};
-use crossterm::event::{self, Event, KeyEvent, KeyModifiers, KeyCode};
+use anyhow::{Error, Result};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use parking_lot::{Mutex, MutexGuard};
 use std::future::Future;
 use std::pin::Pin;
@@ -14,20 +14,20 @@ use std::{
     sync::{
         atomic::AtomicBool,
         mpsc::{self, Sender},
-        Arc
+        Arc,
     },
 };
 use tui::{backend::Backend, Terminal};
 
-use self::reader::{Reader, PageReader};
+use self::events::AppEvent;
+use self::reader::{PageReader, Reader};
 use self::render::render;
 use self::state::AppState;
-use self::events::AppEvent;
 
 mod events;
+pub mod reader;
 mod render;
 mod state;
-pub mod reader;
 pub mod time;
 
 pub struct App<B: Backend + Write + Send> {
@@ -54,16 +54,17 @@ pub struct TaskProducer {
 
 impl TaskProducer {
     pub fn new() -> Self {
-        Self {
-            inner: None,
-        }
+        Self { inner: None }
     }
     pub fn init(&mut self, sender: Sender<Pin<Box<dyn Future<Output = ()> + Send>>>) {
         self.inner.replace(sender);
     }
     pub fn schedule<F: Future<Output = ()> + Send + 'static>(&mut self, task: F) -> Result<()> {
-        self.inner.as_mut().ok_or_else(|| Error::msg("Task scheduled on uninitialized producer."))?
-            .send(Box::pin(task)).map_err(|_| Error::msg("Error when scheduling task."))
+        self.inner
+            .as_mut()
+            .ok_or_else(|| Error::msg("Task scheduled on uninitialized producer."))?
+            .send(Box::pin(task))
+            .map_err(|_| Error::msg("Error when scheduling task."))
     }
 }
 
@@ -220,11 +221,7 @@ where
                 }
 
                 if let Ok(event) = event_receciver.recv() {
-                    events::process_event(
-                        event,
-                        comps.clone(),
-                        &should_stop,
-                    );
+                    events::process_event(event, comps.clone(), &should_stop);
                 }
             });
         }
@@ -233,13 +230,20 @@ where
         {
             let mut escape = false;
             let enter = vec![
-                Event::Key(KeyEvent{code: KeyCode::Char('_'), modifiers: KeyModifiers::ALT}),
-                Event::Key(KeyEvent{code: KeyCode::Char('G'), modifiers: KeyModifiers::SHIFT}),
+                Event::Key(KeyEvent {
+                    code: KeyCode::Char('_'),
+                    modifiers: KeyModifiers::ALT,
+                }),
+                Event::Key(KeyEvent {
+                    code: KeyCode::Char('G'),
+                    modifiers: KeyModifiers::SHIFT,
+                }),
             ];
             let mut enter_cursor = 0;
-            let leave = vec![
-                Event::Key(KeyEvent{code: KeyCode::Char('\\'), modifiers: KeyModifiers::ALT}),
-            ];
+            let leave = vec![Event::Key(KeyEvent {
+                code: KeyCode::Char('\\'),
+                modifiers: KeyModifiers::ALT,
+            })];
             let mut leave_cursor = 0;
             let mut msg = String::new();
             loop {
@@ -284,7 +288,11 @@ where
                         }
 
                         if escape {
-                            if let Event::Key(KeyEvent { code: KeyCode::Char(c), .. }) = event {
+                            if let Event::Key(KeyEvent {
+                                code: KeyCode::Char(c),
+                                ..
+                            }) = event
+                            {
                                 msg.push(c);
                             }
                         } else if let Ok(event) = event.try_into() {

@@ -1,13 +1,11 @@
 use std::{
+    borrow::BorrowMut,
     io::Write,
     lazy::SyncLazy,
-    time::{Duration, SystemTime, UNIX_EPOCH}, borrow::BorrowMut,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use crate::{
-    consts::FRAME_RATE,
-    images::TermWinSize,
-};
+use crate::{consts::FRAME_RATE, images::TermWinSize};
 
 use anyhow::Result;
 use tui::{
@@ -62,19 +60,33 @@ pub fn render_images<B: Backend + Write + Send + 'static>(
     comps: AppComponents<B>,
     ws: &TermWinSize,
 ) -> Result<()> {
-    comps.reader.lock().draw(Rect {
-        x: 0,
-        y: 0,
-        width: ws.cols,
-        height: ws.rows,
-    }, ws, comps.terminal.lock().borrow_mut(), comps.image_manager.lock().borrow_mut())?;
-    comps.image_manager.lock().draw(comps.terminal.lock().backend_mut())?;
-        
+    comps.reader.lock().draw(
+        Rect {
+            x: 0,
+            y: 0,
+            width: ws.cols,
+            height: ws.rows,
+        },
+        ws,
+        comps.terminal.lock().borrow_mut(),
+        comps.image_manager.lock().borrow_mut(),
+    )?;
+    comps
+        .image_manager
+        .lock()
+        .draw(comps.terminal.lock().backend_mut())?;
+
     Ok(())
 }
 
-pub fn render<B: Backend + Write + Send + 'static>(comps: AppComponents<B>, ws: &TermWinSize) -> Result<()> {
-    comps.terminal.lock().draw(|f| render_widgets(f, comps.state.lock().borrow_mut()))?;
+pub fn render<B: Backend + Write + Send + 'static>(
+    comps: AppComponents<B>,
+    ws: &TermWinSize,
+) -> Result<()> {
+    comps
+        .terminal
+        .lock()
+        .draw(|f| render_widgets(f, comps.state.lock().borrow_mut()))?;
     render_images(comps, ws)?;
     Ok(())
 }

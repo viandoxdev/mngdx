@@ -22,12 +22,6 @@ use tui::{backend::CrosstermBackend, Terminal};
 
 use crate::app::App;
 
-// TODO: Fix this shit, probably going to have to let state be state and have it hold nothing but
-// data, to avoid the ongoing case (and ones alike) of: lock state to call reader.read, reader.read
-// locking state to get ImageManager. Possible soltion: keep around a struct of Arc<Mutex<...>>
-// with everyting necessary (to avoid growing and growing the number of arguments. Also see if by
-// doing that we can't remove a few generics because rn this is a mess.
-
 fn main() -> Result<()> {
     pretty_env_logger::init();
 
