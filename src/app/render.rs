@@ -2,12 +2,13 @@ use std::{
     borrow::BorrowMut,
     io::Write,
     lazy::SyncLazy,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH}, sync::Arc,
 };
 
 use crate::{consts::FRAME_RATE, images::TermWinSize};
 
 use anyhow::Result;
+use parking_lot::Mutex;
 use tui::{
     backend::Backend,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -16,17 +17,17 @@ use tui::{
     Frame,
 };
 
-use super::{state::AppState, AppComponents};
+use super::{state::AppState, AppComponents, reader::Reader};
 
 pub static FRAME: SyncLazy<Duration> = SyncLazy::new(|| Duration::from_secs(1) / FRAME_RATE);
 
-pub fn render_widgets<B: Backend + Write + Send>(f: &mut Frame<B>, state: &AppState) {
+pub fn render_widgets<B: Backend + Write + Send>(f: &mut Frame<B>, state: &AppState, reader: Arc<Mutex<dyn Reader<B>>>) -> Rect {
     let size = f.size();
     let layout = Layout::default()
-        .direction(Direction::Vertical)
+        .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Length(4),
             Constraint::Min(10),
+            Constraint::Percentage(80),
             Constraint::Min(10),
         ])
         .split(size);
@@ -35,38 +36,48 @@ pub fn render_widgets<B: Backend + Write + Send>(f: &mut Frame<B>, state: &AppSt
         .alignment(Alignment::Center)
         .block(
             Block::default()
-                .borders(Borders::ALL)
+                .borders(Borders::RIGHT)
                 .style(Style::default().fg(Color::White))
                 .border_type(BorderType::Plain),
         );
-    let t = Block::default()
-        .title(state.block_name.clone())
-        .borders(Borders::ALL);
+    let t = Paragraph::new(format!("loading...\n{}", reader.lock().current()))
+        .alignment(Alignment::Center)
+        .block(Block::default());
     let d = Block::default()
         .title(format!(
-            "{} {size:?}",
+            "{} {}",
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            state.block_name
         ))
-        .borders(Borders::ALL);
+        .borders(Borders::LEFT);
     f.render_widget(title, layout[0]);
     f.render_widget(t, layout[1]);
     f.render_widget(d, layout[2]);
+
+    layout[1]
 }
 
-pub fn render_images<B: Backend + Write + Send + 'static>(
+pub fn render<B: Backend + Write + Send + 'static>(
     comps: AppComponents<B>,
     ws: &TermWinSize,
 ) -> Result<()> {
+    let mut reader_area = Rect {
+        x: 0,
+        y: 0,
+        width: ws.cols,
+        height: ws.rows,
+    };
+
+    comps
+        .terminal
+        .lock()
+        .draw(|f| reader_area = render_widgets(f, comps.state.lock().borrow_mut(), comps.reader.clone()))?;
+
     comps.reader.lock().draw(
-        Rect {
-            x: 0,
-            y: 0,
-            width: ws.cols,
-            height: ws.rows,
-        },
+        reader_area,
         ws,
         comps.terminal.lock().borrow_mut(),
         comps.image_manager.lock().borrow_mut(),
@@ -75,18 +86,5 @@ pub fn render_images<B: Backend + Write + Send + 'static>(
         .image_manager
         .lock()
         .draw(comps.terminal.lock().backend_mut())?;
-
-    Ok(())
-}
-
-pub fn render<B: Backend + Write + Send + 'static>(
-    comps: AppComponents<B>,
-    ws: &TermWinSize,
-) -> Result<()> {
-    comps
-        .terminal
-        .lock()
-        .draw(|f| render_widgets(f, comps.state.lock().borrow_mut()))?;
-    render_images(comps, ws)?;
     Ok(())
 }

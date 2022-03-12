@@ -3,6 +3,7 @@ use crate::consts::EXECUTOR_THREAD_COUNT;
 use crate::images::{self, ImageManager};
 use anyhow::{Error, Result};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use parking_lot::lock_api::RawMutex;
 use parking_lot::{Mutex, MutexGuard};
 use std::future::Future;
 use std::pin::Pin;
@@ -108,6 +109,7 @@ where
     }
 
     pub fn run(&mut self) {
+        log::info!("App start");
         let (event_producer, event_receciver) = mpsc::channel();
         let (task_sender, task_receiver) =
             mpsc::channel::<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>();
@@ -128,6 +130,7 @@ where
             spawn_named("Render", move || {
                 let mut time = Vec::with_capacity(6000);
                 let mut last_frame;
+                log::info!("Render thread start");
                 loop {
                     if should_stop.load(std::sync::atomic::Ordering::Relaxed) {
                         break;
@@ -155,6 +158,7 @@ where
 
                     thread::sleep(sleep);
                 }
+                log::info!("Render thread stop");
             });
         }
 
@@ -166,6 +170,7 @@ where
             let should_stop = stop.clone();
             // Thread owning the tokio runtime
             spawn_named("Executor Owner", move || {
+                log::info!("Executors start");
                 // TODO change that probably to remove the two unsafe blocks. Its late rn im tired
                 // I can't think of a better solution.
 
@@ -185,18 +190,22 @@ where
                     let should_stop = should_stop.clone();
                     let handle = unsafe { (*rt_ptr).handle() };
 
-                    threads.push(spawn_named(format!("Executor {i}"), move || loop {
-                        if should_stop.load(std::sync::atomic::Ordering::Relaxed) {
-                            break;
-                        }
+                    threads.push(spawn_named(format!("Executor {i}"), move || {
+                        log::info!("Executor thread #{i} start");
+                        loop {
+                            if should_stop.load(std::sync::atomic::Ordering::Relaxed) {
+                                break;
+                            }
 
-                        if let Ok(task) = receiver.lock().recv() {
-                            log::debug!("Executor {i} received task");
-                            handle.block_on(async move {
-                                task.await;
-                            });
+                            if let Ok(task) = receiver.lock().recv() {
+                                log::trace!("Executor {i} received task");
+                                handle.block_on(async move {
+                                    task.await;
+                                });
+                            }
+                            thread::sleep(Duration::from_millis(50));
                         }
-                        thread::sleep(Duration::from_millis(50));
+                        log::info!("Executor thread #{i} stop");
                     }));
                 }
 
@@ -208,6 +217,7 @@ where
                 unsafe {
                     Box::from_raw(rt_ptr);
                 }
+                log::info!("Executors stop");
             });
         }
 
@@ -215,19 +225,24 @@ where
         {
             let comps = self.components.clone();
             let should_stop = stop.clone();
-            spawn_named("Event Loop", move || loop {
-                if should_stop.load(std::sync::atomic::Ordering::Relaxed) {
-                    break;
-                }
+            spawn_named("Event Loop", move || {
+                log::info!("Event loop thread start");
+                loop {
+                    if should_stop.load(std::sync::atomic::Ordering::Relaxed) {
+                        break;
+                    }
 
-                if let Ok(event) = event_receciver.recv() {
-                    events::process_event(event, comps.clone(), &should_stop);
+                    if let Ok(event) = event_receciver.recv() {
+                        events::process_event(event, comps.clone(), &should_stop);
+                    }
                 }
+                log::info!("Event loop thread stop");
             });
         }
 
         // Input "thread", has to be on main because ¯\_(ツ)_/¯
         {
+            log::info!("Input thread start");
             let mut escape = false;
             let enter = vec![
                 Event::Key(KeyEvent {
@@ -251,7 +266,7 @@ where
                     break;
                 }
 
-                if event::poll(Duration::from_millis(50)).is_ok() {
+                if event::poll(Duration::from_millis(50)).unwrap_or(false) {
                     let event = event::read().ok();
                     if let Some(event) = event {
                         if event == enter[enter_cursor] {
@@ -272,12 +287,7 @@ where
                                 log::trace!("Kitty message: {msg}");
                                 // if message is saying x doesn't exist
                                 if msg.contains("ENOENT") {
-                                    // force everything to be reloaded.
-                                    let mut stdout = self.components.terminal.lock();
-                                    let mut im = self.components.image_manager.lock();
-                                    im.unload_all(stdout.backend_mut()).ok();
-                                    // requeue draw as the last one failed
-                                    im.draw(stdout.backend_mut()).ok();
+                                    self.components.image_manager.lock().set_diry();
                                 }
                                 msg.clear();
                                 escape = false;
@@ -302,7 +312,9 @@ where
                     }
                 }
             }
+            log::info!("Input thread stop");
         }
+        log::info!("App stop");
     }
 
     /// get a mutex guard to the terminal

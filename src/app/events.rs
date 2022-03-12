@@ -1,6 +1,6 @@
 use crate::api::Api;
 
-use super::AppComponents;
+use super::{AppComponents, render::FRAME};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use rand::prelude::SliceRandom;
 use std::{
@@ -16,7 +16,7 @@ pub enum AppEvent {
     Next,
     Previous,
     Quit,
-    ReloadImages,
+    Resize,
 }
 
 pub fn process_event<B: Backend + Write + Send + 'static>(
@@ -56,8 +56,12 @@ pub fn process_event<B: Backend + Write + Send + 'static>(
         AppEvent::Quit => {
             should_stop.store(true, std::sync::atomic::Ordering::Relaxed);
         }
-        AppEvent::ReloadImages => {
-            let _ = comps.image_manager.lock().force_reload_images();
+        AppEvent::Resize => {
+            // necessary because IDK
+            std::thread::sleep(*FRAME);
+            let _ = comps.image_manager.lock().set_diry();
+            std::thread::sleep(*FRAME);
+            comps.terminal.lock().autoresize().ok();
         }
     }
 }
@@ -76,7 +80,7 @@ impl TryFrom<Event> for AppEvent {
             | Event::Key(KeyEvent {
                 code: KeyCode::Char('r'),
                 modifiers: KeyModifiers::NONE,
-            }) => Ok(AppEvent::ReloadImages),
+            }) => Ok(AppEvent::Resize),
 
             Event::Key(KeyEvent {
                 code: KeyCode::Right,

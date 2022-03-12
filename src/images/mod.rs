@@ -10,7 +10,7 @@ use image::DynamicImage;
 use reqwest::IntoUrl;
 use tui::layout::Rect;
 
-use crate::consts::IMAGE_SLOTS;
+use crate::{consts::IMAGE_SLOTS, app::time::{timer_start, timer_stop}};
 
 // this is the same as libc::winsize, but I didn't want libc to be exposed (and this implements
 // debug)
@@ -100,7 +100,7 @@ fn display_image(
     // remove last coma
     placement_options.pop();
 
-    write!(stdout, "\x1b[{};{}H", placement.y, placement.x)?;
+    write!(stdout, "\x1b[{};{}H", placement.y + 1, placement.x + 1)?;
     write!(
         stdout,
         "\x1b_Ga=p,C=1,z={},i={id},p={pid},{placement_options};AAAA\x1b\\",
@@ -229,7 +229,9 @@ impl ImageManager {
     }
 
     pub fn add_image(&mut self, id: u32, image: DynamicImage) {
+        timer_start("add_image");
         self.images.insert(id, Some(image));
+        timer_stop("add_image");
     }
 
     pub fn add_from_memory(&mut self, id: u32, bytes: &[u8]) -> Result<()> {
@@ -285,7 +287,6 @@ impl ImageManager {
             // unload image if all slots are full
             if self.loaded.len() == IMAGE_SLOTS as usize {
                 let id = self.loaded.back().unwrap();
-                log::debug!("unloading {id}");
                 unload_image(stdout, *id)?;
                 // pop after unload in case unload fails
                 self.loaded.pop_back();
@@ -305,11 +306,10 @@ impl ImageManager {
         self.requirements.clear();
     }
 
-    /// Force the next displayed images to be reloaded, this must be used if the terminal unloads
-    /// the loaded images or they won't render. (for any reason). Using this with loaded images can
-    /// leak images, making them stay loaded and take up memory.
-    pub fn force_reload_images(&mut self) {
+    /// Make the IM not trust what it thinks is currently loaded, and forces it to reload on draw.
+    pub fn set_diry(&mut self) {
         self.loaded.clear();
+        self.state.clear();
     }
 
     pub fn draw(&mut self, stdout: &mut impl Write) -> Result<()> {
